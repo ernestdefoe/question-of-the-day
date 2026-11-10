@@ -141,6 +141,7 @@ ernestdefoe-question-of-the-day:
       duplicate: That question is already in the pool or the queue.
       too_many_pending: You have 5 suggestions waiting. Wait for them to be reviewed first.
       already_asked: That question has already been asked.
+      has_votes: Members have voted for this question, so its wording can't change now. Withdraw it and suggest the new wording instead.
       date_past: Pick today or a later date.
       today_answered: Someone already answered today's question, so it can't be swapped. Schedule this one instead.
       slow_down: Slow down a little and try again in a minute.

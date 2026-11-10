@@ -340,4 +340,113 @@ class QuestionOfTheDayTest extends TestCase
         $page = (string) $this->send($this->request('GET', '/question/2'))->getBody();
         $this->assertStringNotContainsString('Best road trip', $page);
     }
+
+    #[Test]
+    public function ask_now_takes_back_what_delivery_already_did(): void
+    {
+        $this->setting(Settings::DISCUSSION, '1');
+        $this->api('POST', '/subscription', 3, ['on' => true]);
+        $this->api('GET', '', 2);
+        $delivery = $this->app()->getContainer()->make(Delivery::class);
+        $delivery->run();
+        $posted = Question::query()->find(2)->discussion_id;
+        $this->assertNotNull($posted);
+        $this->assertSame(1, Notification::query()->where('type', 'qotdAsked')->count());
+
+        $this->assertSame(200, $this->api('POST', '/questions/3/ask', 5)[0]);
+
+        $this->assertNotNull(Discussion::query()->find($posted)->hidden_at, 'the old daily discussion is hidden');
+        $about = fn (int $id) => Notification::query()->whereIn('type', ['qotdNew', 'qotdAsked'])->get()
+            ->filter(fn (Notification $n) => ((is_array($n->data) ? $n->data : json_decode((string) $n->data, true))['question'] ?? null) === $id)->count();
+        $this->assertSame(0, $about(2), 'its alerts are taken back');
+        $this->assertNull(Question::query()->find(2)->discussion_id);
+
+        // The swap queued the new question's delivery (sync here); another run changes nothing.
+        $delivery->run();
+        $this->assertSame(1, Discussion::query()->whereNull('hidden_at')->count(), 'one visible daily discussion: the new question\'s');
+        $this->assertSame(1, $about(3));
+        $this->assertSame(1, Notification::query()->where('type', 'qotdNew')->where('user_id', 3)->count());
+    }
+
+    #[Test]
+    public function a_page_request_delivers_one_small_chunk_and_the_scheduler_the_rest(): void
+    {
+        $this->app();
+        $db = $this->database();
+        for ($id = 10; $id < 80; $id++) {
+            $db->table('users')->insert(['id' => $id, 'username' => "sub$id", 'email' => "sub$id@machine.local", 'is_email_confirmed' => 1, 'password' => 'x', 'joined_at' => Carbon::now()]);
+            $db->table('group_user')->insert(['user_id' => $id, 'group_id' => Group::MEMBER_ID]);
+            $db->table('qotd_subscriptions')->insert(['user_id' => $id, 'created_at' => Carbon::now()]);
+        }
+
+        // The visitor whose request puts the question up runs the queued job (the test queue is sync).
+        $this->api('GET', '', null);
+        $this->assertSame(Delivery::REQUEST_CHUNK, Notification::query()->where('type', 'qotdNew')->count());
+        $this->assertNull(Question::query()->find(2)->notified_at);
+
+        $this->app()->getContainer()->make(Delivery::class)->run();
+        $this->assertSame(70, Notification::query()->where('type', 'qotdNew')->count());
+        $this->assertNotNull(Question::query()->find(2)->notified_at);
+        $this->assertSame(79, Question::query()->find(2)->email_cursor);
+    }
+
+    #[Test]
+    public function ask_now_racing_midnight_never_leaves_a_question_open_beside_the_new_days(): void
+    {
+        $this->api('GET', '', 2);
+        $rotator = $this->app()->getContainer()->make(Rotator::class);
+
+        // After midnight with nothing rotated yet: the swap reads the new day itself and simply asks for it.
+        $this->moveTo('2026-11-11 06:30:00');
+        $this->assertTrue($rotator->swap(Question::query()->find(3)));
+        $this->assertSame('2026-11-11', Question::query()->find(3)->asked_on);
+        $this->assertSame(1, Question::query()->whereNotNull('asked_on')->whereNull('closed_at')->count());
+        $this->assertSame('2026-11-10', Question::query()->find(2)->asked_on, 'yesterday\'s stays in the archive');
+
+        // Today's question already closed under us (a rotation won the race): no swap.
+        Question::query()->whereKey(3)->update(['closed_at' => Carbon::now()]);
+        $this->assertFalse($rotator->swap(Question::query()->find(1)));
+        $this->assertNull(Question::query()->find(1)->asked_on);
+    }
+
+    #[Test]
+    public function deleting_an_answer_to_the_open_question_gives_its_streak_credit_back(): void
+    {
+        $this->api('GET', '', 2);
+        $this->api('POST', '/questions/2/answers', 2, ['body' => 'Day one']);
+        $this->moveTo('2026-11-11 07:00:00');
+        $id = $this->api('GET', '', 2)[1]['question']['id'];
+        $this->api('POST', "/questions/$id/answers", 2, ['body' => 'Day two']);
+        $this->assertSame(2, Streak::query()->find(2)->current);
+
+        $answer = Answer::query()->where('question_id', $id)->where('user_id', 2)->first();
+        $this->assertSame(204, $this->api('DELETE', '/answers/'.$answer->id, 2)[0]);
+        $streak = Streak::query()->find(2);
+        $this->assertSame([1, 1, '2026-11-10'], [$streak->current, $streak->total, $streak->last_day]);
+
+        // Answer again: credited once, not twice.
+        $this->api('POST', "/questions/$id/answers", 2, ['body' => 'Day two, again']);
+        $this->assertSame([2, 2], [Streak::query()->find(2)->current, Streak::query()->find(2)->total]);
+
+        // A moderator deletes the day's question: its answers' credit goes, and its replacement counts.
+        $this->assertSame(204, $this->api('DELETE', "/questions/$id", 5)[0]);
+        $this->assertSame(1, Streak::query()->find(2)->current);
+        $replacement = $this->api('GET', '', 2)[1]['question']['id'];
+        $this->assertNotSame($id, $replacement);
+        $this->assertSame(201, $this->api('POST', "/questions/$replacement/answers", 2, ['body' => 'The new one'])[0]);
+        $this->assertSame(2, Streak::query()->find(2)->current);
+    }
+
+    #[Test]
+    public function a_suggestions_words_cant_change_under_its_votes(): void
+    {
+        $this->api('POST', '/questions/4/vote', 2, ['vote' => true]);
+        $this->assertSame(409, $this->api('PATCH', '/questions/4', 3, ['body' => 'Which snack would you take to the moon instead?'])[0]);
+        $this->assertSame('Which snack would you take to a desert island?', Question::query()->find(4)->body);
+
+        // A moderator may reword it; the count starts again.
+        $this->assertSame(200, $this->api('PATCH', '/questions/4', 5, ['body' => 'Which snack would you take on a desert island?'])[0]);
+        $this->assertSame(0, Question::query()->find(4)->votes_count);
+        $this->assertSame(0, $this->database()->table('qotd_votes')->where('question_id', 4)->count());
+    }
 }

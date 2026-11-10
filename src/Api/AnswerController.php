@@ -127,6 +127,10 @@ class AnswerController implements RequestHandlerInterface
             $this->db->table('qotd_reactions')->where('answer_id', $answer->id)->delete();
             $answer->delete();
         });
+        // While the question is up, an answer taken away takes its streak credit with it.
+        if ($question->isOpen()) {
+            $this->streaks->undo($answer->user_id, $question);
+        }
 
         if ($question->top_answer_id === $answer->id) {
             $this->rotator->refreshTop($question);

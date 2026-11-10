@@ -3,11 +3,13 @@
 namespace ErnestDefoe\QuestionOfTheDay\Api;
 
 use Carbon\Carbon;
+use ErnestDefoe\QuestionOfTheDay\Answer;
 use ErnestDefoe\QuestionOfTheDay\Day;
 use ErnestDefoe\QuestionOfTheDay\Question;
 use ErnestDefoe\QuestionOfTheDay\Rotator;
 use ErnestDefoe\QuestionOfTheDay\Settings;
 use ErnestDefoe\QuestionOfTheDay\Starter;
+use ErnestDefoe\QuestionOfTheDay\Streaks;
 use Flarum\Http\RequestUtil;
 use Flarum\User\User;
 use Laminas\Diactoros\Response\EmptyResponse;
@@ -28,7 +30,7 @@ use Psr\Http\Server\RequestHandlerInterface;
  */
 class QuestionController implements RequestHandlerInterface
 {
-    public function __construct(private readonly Rotator $rotator, private readonly Day $day, private readonly RateLimit $limits)
+    public function __construct(private readonly Rotator $rotator, private readonly Day $day, private readonly RateLimit $limits, private readonly Streaks $streaks)
     {
     }
 
@@ -143,6 +145,14 @@ class QuestionController implements RequestHandlerInterface
             if (Input::duplicate($text, $question->id)) {
                 return Errors::make(409, 'duplicate');
             }
+            // Votes were for the old words: the author can't change them under the voters, and a moderator's rewording starts the count again.
+            if ($text !== $question->body && $question->votes_count > 0) {
+                if (! $moderator) {
+                    return Errors::make(409, 'has_votes');
+                }
+                Question::query()->getConnection()->table('qotd_votes')->where('question_id', $question->id)->delete();
+                $question->votes_count = 0;
+            }
             $question->body = $text;
         }
 
@@ -178,6 +188,11 @@ class QuestionController implements RequestHandlerInterface
             return Errors::make(404, 'not_found');
         }
 
+        // Deleting the question that's up takes its answers' streak credit back first.
+        if ($question->isOpen()) {
+            Answer::query()->where('question_id', $question->id)->pluck('user_id')
+                ->each(fn ($userId) => $this->streaks->undo((int) $userId, $question));
+        }
         $question->delete();
         $this->rotator->forget();
 

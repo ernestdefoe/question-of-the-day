@@ -16,6 +16,12 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property int $best
  * @property int $total
  * @property string|null $last_day Y-m-d
+ * @property int|null $last_question_id
+ * @property int $prev_current
+ * @property int $prev_best
+ * @property int $prev_total
+ * @property string|null $prev_last_day
+ * @property int|null $prev_last_question_id
  * @property-read User|null $user
  */
 class Streak extends AbstractModel
@@ -31,6 +37,11 @@ class Streak extends AbstractModel
         'current' => 'integer',
         'best' => 'integer',
         'total' => 'integer',
+        'last_question_id' => 'integer',
+        'prev_current' => 'integer',
+        'prev_best' => 'integer',
+        'prev_total' => 'integer',
+        'prev_last_question_id' => 'integer',
     ];
 
     /** The streak as it stands for the question being answered now: broken if they missed the last one. */
