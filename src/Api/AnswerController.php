@@ -65,13 +65,19 @@ class AnswerController implements RequestHandlerInterface
             return Errors::make(422, 'answer_length');
         }
 
+        if (Answer::query()->where('question_id', $question->id)->where('user_id', $actor->id)->exists()) {
+            return Errors::make(409, 'already_answered');
+        }
+
+        // The unique index settles a double submit. In its own transaction (a savepoint inside an
+        // outer one), because on PostgreSQL a failed statement otherwise aborts the whole transaction.
         try {
             $answer = new Answer();
             $answer->question_id = $question->id;
             $answer->user_id = $actor->id;
             $answer->body = $body;
             $answer->created_at = Carbon::now();
-            $answer->save();
+            $this->db->transaction(fn () => $answer->save());
         } catch (UniqueConstraintViolationException) {
             return Errors::make(409, 'already_answered');
         }
