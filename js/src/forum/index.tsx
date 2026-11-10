@@ -88,7 +88,13 @@ app.initializers.add('ernestdefoe/question-of-the-day', () => {
   // String form: IndexSidebar lives in a lazy chunk, and extending an imported copy patches one core never renders.
   extend('flarum/forum/components/IndexSidebar', 'navItems', function (items: ItemList<any>) {
     if (!app.forum.attribute('qotdCanView') || !app.forum.attribute('qotdNav')) return;
-    items.add('question-of-the-day', LinkButton.component({ href: app.route('question-of-the-day'), icon: 'fas fa-comment-dots' }, t('nav')), 79);
+    // Active on every question page, so the phone header's section menu names this one, not "All Discussions".
+    const active = String(app.current.get('routeName') || '').startsWith('question-of-the-day');
+    items.add(
+      'question-of-the-day',
+      LinkButton.component({ href: app.route('question-of-the-day'), icon: 'fas fa-comment-dots', active }, t('nav')),
+      79
+    );
   });
 
   // The card goes above the discussion list on the front page only: tag pages and searches keep theirs.

@@ -47,6 +47,7 @@ export default class QuestionPage extends Page {
   failed: string | null = null;
   pastSort: 'top' | 'new' = 'top';
   justAnswered = false;
+  tabShown = false;
 
   oninit(vnode: Mithril.Vnode<any, this>) {
     super.oninit(vnode);
@@ -105,7 +106,12 @@ export default class QuestionPage extends Page {
     const active = this.id ? 'archive' : this.tab;
 
     return (
-      <nav className="QotdTabs" aria-label={extractText(t('page.title'))}>
+      <nav
+        className="QotdTabs"
+        aria-label={extractText(t('page.title'))}
+        oncreate={(vnode: Mithril.VnodeDOM) => this.showActiveTab(vnode.dom)}
+        onupdate={(vnode: Mithril.VnodeDOM) => this.showActiveTab(vnode.dom)}
+      >
         {tabs.map(([key, icon, label, href]) =>
           key === 'queue' && data && !data.can.suggest && !data.can.moderate ? null : (
             <Link href={href} className={'QotdTabs-tab' + (active === key ? ' active' : '')} aria-current={active === key ? 'page' : undefined}>
@@ -117,6 +123,16 @@ export default class QuestionPage extends Page {
         )}
       </nav>
     );
+  }
+
+  /** On a phone the tab row scrolls sideways: bring the current tab into it (sideways only, never the page). */
+  showActiveTab(nav: Element) {
+    const active = nav.querySelector<HTMLElement>('.active');
+    // Until today's numbers arrive (the queue's count badge widens the row); after that the row is the member's to scroll.
+    if (!active || this.tabShown) return;
+    if (today.data) this.tabShown = true;
+    const overflow = active.getBoundingClientRect().right - nav.getBoundingClientRect().right;
+    if (overflow > 0) nav.scrollLeft += overflow;
   }
 
   content(): Mithril.Children {
