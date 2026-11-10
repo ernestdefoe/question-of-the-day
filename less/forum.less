@@ -646,8 +646,12 @@ html:not(#x-hi) .QotdTabs-tab {
     color: var(--text-color);
   }
   &.active {
-    background: var(--qotd-tint-strong);
-    color: var(--primary-color);
+    background: var(--primary-color);
+    color: var(--body-bg);
+    .QotdTabs-count {
+      background: var(--body-bg);
+      color: var(--primary-color);
+    }
   }
 }
 .QotdTabs-count {
