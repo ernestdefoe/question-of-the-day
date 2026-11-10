@@ -87,12 +87,14 @@ return [
                 ->get(fn ($forum, Context $context) => $context->getActor()->can(Settings::VIEW)),
         ]),
 
+    // String literals, not Settings::… constants: extend.php runs at boot, and a class lookup here
+    // fatals every request on a worker whose autoload map is stale mid-install. (Inside closures is fine.)
     (new Extend\Settings())
-        ->default(Settings::NAV, true)
-        ->default(Settings::HERO, true)
-        ->default(Settings::MAX_LENGTH, Settings::DEFAULT_MAX_LENGTH)
-        ->serializeToForum('qotdNav', Settings::NAV, 'boolval')
-        ->serializeToForum('qotdHero', Settings::HERO, 'boolval'),
+        ->default('question-of-the-day.nav', true)
+        ->default('question-of-the-day.hero', true)
+        ->default('question-of-the-day.max_length', 280)
+        ->serializeToForum('qotdNav', 'question-of-the-day.nav', 'boolval')
+        ->serializeToForum('qotdHero', 'question-of-the-day.hero', 'boolval'),
 
     // Before the user row goes: the foreign keys take their rows, but not the counts they added to.
     (new Extend\Event())
