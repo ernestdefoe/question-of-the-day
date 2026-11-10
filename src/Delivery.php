@@ -37,6 +37,8 @@ use Throwable;
 class Delivery
 {
     private const CHUNK = 500;
+    /** What a page request may deliver (a sync queue runs the job inside it): the scheduler does the rest. */
+    public const REQUEST_CHUNK = 50;
     private const CHUNKS_PER_RUN = 20;
     private const MAX_POST_ATTEMPTS = 3;
 
@@ -51,8 +53,11 @@ class Delivery
     ) {
     }
 
-    /** @param int $chunks how many chunks of subscribers this run may alert (a page request's queue may be sync). */
-    public function run(int $chunks = self::CHUNKS_PER_RUN): void
+    /**
+     * @param int $chunks how many chunks of subscribers this run may alert
+     * @param int $chunkSize how many subscribers in a chunk (small when it runs inside a page request)
+     */
+    public function run(int $chunks = self::CHUNKS_PER_RUN, int $chunkSize = self::CHUNK): void
     {
         $question = Question::current();
         if (! $question || $question->closed_at) {
@@ -60,7 +65,7 @@ class Delivery
         }
 
         if ($question->notified_at === null) {
-            $this->guard($question, fn () => $this->notify($question, $chunks));
+            $this->guard($question, fn () => $this->notify($question, $chunks, $chunkSize));
         }
 
         if ($question->posted_at === null && $question->post_attempts < self::MAX_POST_ATTEMPTS && $this->settings->get(Settings::DISCUSSION)) {
@@ -68,13 +73,40 @@ class Delivery
         }
     }
 
-    private function notify(Question $question, int $chunks): void
+    /**
+     * Takes back what was delivered for a question that came down again (a
+     * moderator swapped it before anyone answered): its daily discussion is
+     * hidden and its alerts deleted, so it can go up later as if new. Emails
+     * already sent can't be recalled.
+     */
+    public function retract(Question $question): void
+    {
+        if ($question->discussion_id && ($discussion = Discussion::query()->find($question->discussion_id))) {
+            $discussion->hide();
+            $discussion->save();
+        }
+
+        if ($subject = $this->subject($question)) {
+            Notification::query()->matchingBlueprint(new NewQuestionBlueprint($question, $subject))->delete();
+        }
+        if ($question->user) {
+            Notification::query()->matchingBlueprint(new AskedBlueprint($question))->delete();
+        }
+    }
+
+    /** Whose name the daily alert carries: whoever wrote the question, or the first admin. */
+    private function subject(Question $question): ?User
+    {
+        return $question->user ?? User::query()->whereHas('groups', fn ($q) => $q->whereKey(Group::ADMINISTRATOR_ID))->orderBy('id')->first();
+    }
+
+    private function notify(Question $question, int $chunks, int $chunkSize): void
     {
         if ($question->notify_cursor === 0 && $question->suggested && $question->user) {
             $this->notifications->sync(new AskedBlueprint($question), [$question->user]);
         }
 
-        $subject = $question->user ?? User::query()->whereHas('groups', fn ($q) => $q->whereKey(Group::ADMINISTRATOR_ID))->orderBy('id')->first();
+        $subject = $this->subject($question);
         if (! $subject) {
             $question->notified_at = Carbon::now();
             $question->save();
@@ -89,13 +121,14 @@ class Delivery
         $groups[] = Group::ADMINISTRATOR_ID;
         // Never the member who suggested it: they got their own alert.
         $skip = $question->suggested ? (int) $question->user_id : 0;
+        $drivers = NotificationSyncer::getNotificationDrivers();
 
         for ($i = 0; $i < $chunks; $i++) {
             $chunk = User::query()
                 ->whereIn('id', fn ($q) => $q->select('user_id')->from('qotd_subscriptions'))
                 ->where('id', '>', $question->notify_cursor)
                 ->when(! $everyone, fn ($q) => $q->whereHas('groups', fn ($g) => $g->whereIn('groups.id', $groups)))
-                ->orderBy('id')->limit(self::CHUNK)->get();
+                ->orderBy('id')->limit($chunkSize)->get();
 
             if ($chunk->isEmpty()) {
                 $question->notified_at = Carbon::now();
@@ -105,15 +138,30 @@ class Delivery
             }
 
             $users = $chunk->filter(fn (User $user) => $user->id !== $skip);
+
+            // Alerts in one batch, to whoever doesn't have it yet (a rerun of this chunk sends none twice).
             $have = Notification::query()->matchingBlueprint($blueprint)->whereIn('user_id', $users->modelKeys())->pluck('user_id')->all();
             $new = $users->reject(fn (User $user) => in_array($user->id, $have))->values()->all();
-            if ($new) {
-                foreach (NotificationSyncer::getNotificationDrivers() as $driver) {
+            foreach ($drivers as $name => $driver) {
+                if ($name !== 'email' && $new) {
                     $driver->send($blueprint, $new);
                 }
             }
 
+            // Emails one by one behind their own cursor: a timeout halfway resumes at the next member, never skips the rest.
+            if (isset($drivers['email'])) {
+                foreach ($users as $user) {
+                    if ($user->id <= $question->email_cursor || ! $user->shouldEmail(NewQuestionBlueprint::getType())) {
+                        continue;
+                    }
+                    $drivers['email']->send($blueprint, [$user]);
+                    $question->email_cursor = $user->id;
+                    Question::query()->whereKey($question->id)->update(['email_cursor' => $user->id]);
+                }
+            }
+
             $question->notify_cursor = (int) $chunk->last()->id;
+            $question->email_cursor = max($question->email_cursor, $question->notify_cursor);
             $question->save();
         }
     }

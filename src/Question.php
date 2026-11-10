@@ -25,6 +25,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property int|null $top_answer_id
  * @property int|null $discussion_id
  * @property int $notify_cursor
+ * @property int $email_cursor
  * @property Carbon|null $notified_at
  * @property Carbon|null $posted_at
  * @property int $post_attempts
@@ -58,6 +59,7 @@ class Question extends AbstractModel
         'top_answer_id' => 'integer',
         'discussion_id' => 'integer',
         'notify_cursor' => 'integer',
+        'email_cursor' => 'integer',
         'notified_at' => 'datetime',
         'posted_at' => 'datetime',
         'post_attempts' => 'integer',

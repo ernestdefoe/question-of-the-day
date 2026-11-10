@@ -102,44 +102,54 @@ class Rotator
 
     /**
      * Swaps today's question for another before anyone has answered it (a
-     * moderator's "Ask this now"). False if today's already has answers.
+     * moderator's "Ask this now"). False if today's already has answers or has
+     * closed. What delivery already did for the old one is taken back: its
+     * daily discussion is hidden and its alerts deleted (emails already sent
+     * can't be), so it can go up again later as if new.
      */
     public function swap(Question $pick): bool
     {
-        $today = $this->day->today();
-
-        $swapped = $this->db->transaction(function () use ($today, $pick) {
+        $swapped = $this->db->transaction(function () use ($pick) {
+            // The day and today's question are read here, under the lock: a swap racing midnight
+            // must not put yesterday's question back or leave one open beside the new day's.
+            $today = $this->day->today();
             $todays = Question::query()->where('asked_on', $today)->lockForUpdate()->first();
             if (! $todays) {
                 return null;
             }
-            if (Answer::query()->where('question_id', $todays->id)->exists()) {
+            if ($todays->closed_at !== null || Question::query()->where('asked_on', '>', $today)->exists()
+                || Answer::query()->where('question_id', $todays->id)->exists()) {
                 return false;
             }
 
             // Back into the pool, as if never asked.
             Question::query()->whereKey($todays->id)->update([
                 'asked_on' => null, 'prev_asked_on' => null, 'opened_at' => null, 'closed_at' => null,
-                'notify_cursor' => 0, 'notified_at' => null, 'posted_at' => null, 'post_attempts' => 0, 'discussion_id' => null,
+                'notify_cursor' => 0, 'email_cursor' => 0, 'notified_at' => null, 'posted_at' => null, 'post_attempts' => 0, 'discussion_id' => null,
             ]);
 
-            return Question::query()->whereKey($pick->id)->inPool()->update([
+            $won = Question::query()->whereKey($pick->id)->inPool()->update([
                 'asked_on' => $today,
                 'prev_asked_on' => $todays->prev_asked_on,
                 'opened_at' => Carbon::now(),
                 'scheduled_for' => null,
             ]) === 1;
+
+            return $won ? $todays : false;
         });
 
         if ($swapped === null) {
             // Nothing up today yet: this simply becomes today's question.
-            return $this->rotate($today, $pick) !== null;
+            return $this->rotate($this->day->today(), $pick) !== null;
         }
-        if ($swapped) {
-            $this->queue->push(new Deliver());
+        if (! $swapped) {
+            return false;
         }
 
-        return $swapped;
+        resolve(Delivery::class)->retract($swapped);
+        $this->queue->push(new Deliver());
+
+        return true;
     }
 
     /** The question that goes up next: one scheduled for today (or a missed date) first, then the most upvoted, then the oldest. */
