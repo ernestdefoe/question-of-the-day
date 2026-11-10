@@ -3,7 +3,9 @@
 namespace ErnestDefoe\QuestionOfTheDay\Http;
 
 use ErnestDefoe\QuestionOfTheDay\Question;
+use ErnestDefoe\QuestionOfTheDay\Settings;
 use Flarum\Frontend\Document;
+use Flarum\Http\RequestUtil;
 use Flarum\Http\UrlGenerator;
 use Flarum\Locale\TranslatorInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -26,7 +28,8 @@ class PageContent
         $document->title = $title;
         $document->canonicalUrl = $this->url->to('forum')->route('question-of-the-day');
 
-        if ($id) {
+        // Only for visitors who may see questions: the title would show it to anyone otherwise.
+        if ($id && RequestUtil::getActor($request)->can(Settings::VIEW)) {
             $question = Question::query()->whereNotNull('asked_on')->find($id);
             if ($question) {
                 $document->title = $question->body.' - '.$title;

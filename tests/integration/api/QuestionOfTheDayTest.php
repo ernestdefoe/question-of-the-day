@@ -328,4 +328,16 @@ class QuestionOfTheDayTest extends TestCase
         $this->assertSame(0, Question::query()->find(4)->votes_count);
         $this->assertSame(0, Answer::query()->where('user_id', 2)->count());
     }
+
+    #[Test]
+    public function without_the_view_permission_nothing_shows_not_even_the_page_title(): void
+    {
+        $this->database()->table('group_permission')->where('permission', Settings::VIEW)->delete();
+        $this->assertSame(403, $this->api('GET', '', null)[0]);
+        $this->assertSame(403, $this->api('GET', '/archive', 2)[0]);
+
+        $this->app()->getContainer()->make(Rotator::class)->rotate('2026-11-10');
+        $page = (string) $this->send($this->request('GET', '/question/2'))->getBody();
+        $this->assertStringNotContainsString('Best road trip', $page);
+    }
 }
