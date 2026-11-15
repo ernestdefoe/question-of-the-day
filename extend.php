@@ -26,9 +26,7 @@ use ErnestDefoe\QuestionOfTheDay\Http\PageContent;
 use ErnestDefoe\QuestionOfTheDay\Notification\AskedBlueprint;
 use ErnestDefoe\QuestionOfTheDay\Notification\NewQuestionBlueprint;
 use ErnestDefoe\QuestionOfTheDay\Settings;
-use Flarum\Api\Context;
 use Flarum\Api\Resource\ForumResource;
-use Flarum\Api\Schema;
 use Flarum\Extend;
 use Flarum\Gdpr\Extend\UserData;
 use Flarum\User\Event\Deleting;
@@ -84,12 +82,8 @@ return [
         ->type(NewQuestionBlueprint::class, ['alert'])
         ->type(AskedBlueprint::class, ['alert']),
 
-    // The viewer's own permissions: already loaded, so no query.
     (new Extend\ApiResource(ForumResource::class))
-        ->fields(fn () => [
-            Schema\Boolean::make('qotdCanView')
-                ->get(fn ($forum, Context $context) => $context->getActor()->can(Settings::VIEW)),
-        ]),
+        ->fields(Api\ForumFields::class),
 
     // String literals, not Settings::… constants: extend.php runs at boot, and a class lookup here
     // fatals every request on a worker whose autoload map is stale mid-install. (Inside closures is fine.)

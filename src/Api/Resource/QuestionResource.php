@@ -10,6 +10,7 @@ use Flarum\Api\Context;
 use Flarum\Api\Endpoint;
 use Flarum\Api\Resource\AbstractDatabaseResource;
 use Flarum\Api\Schema;
+use Illuminate\Contracts\Container\Container;
 use Illuminate\Database\Eloquent\Builder;
 use Laminas\Diactoros\Response\JsonResponse;
 use Tobyz\JsonApiServer\Context as BaseContext;
@@ -36,8 +37,17 @@ use Tobyz\JsonApiServer\Pagination\Pagination;
  */
 class QuestionResource extends AbstractDatabaseResource
 {
-    public function __construct(private readonly QuestionBatch $batch)
+    /**
+     * Resource constructors run on every API request, so the pool's rules (and what they need)
+     * are only built when a question is actually written: the container hands them over on first use.
+     */
+    public function __construct(private readonly QuestionBatch $batch, private readonly Container $container)
     {
+    }
+
+    private function questions(): Questions
+    {
+        return $this->container->make(Questions::class);
     }
 
     public function type(): string
@@ -81,8 +91,6 @@ class QuestionResource extends AbstractDatabaseResource
 
     public function endpoints(): array
     {
-        $questions = fn (): Questions => resolve(Questions::class);
-
         return [
             Endpoint\Index::make()
                 ->paginate(20, 200)
@@ -97,25 +105,25 @@ class QuestionResource extends AbstractDatabaseResource
             Endpoint\Endpoint::make('qotd-questions.vote')
                 ->route('POST', '/{id}/vote')
                 ->authenticated()
-                ->action(fn (Context $context) => $questions()->vote($context->model, (bool) ($context->body()['vote'] ?? true), $context->getActor())),
+                ->action(fn (Context $context) => $this->questions()->vote($context->model, (bool) ($context->body()['vote'] ?? true), $context->getActor())),
             Endpoint\Endpoint::make('qotd-questions.ask')
                 ->route('POST', '/{id}/ask')
                 ->authenticated()
-                ->action(fn (Context $context) => $questions()->askNow($context->model, $context->getActor())),
+                ->action(fn (Context $context) => $this->questions()->askNow($context->model, $context->getActor())),
             Endpoint\Endpoint::make('qotd-questions.add')
                 ->route('POST', '/add')
                 ->authenticated()
-                ->action(fn (Context $context) => $questions()->addMany((array) ($context->body()['bodies'] ?? []), $context->getActor()))
+                ->action(fn (Context $context) => $this->questions()->addMany((array) ($context->body()['bodies'] ?? []), $context->getActor()))
                 ->response(fn (Context $context, array $result) => new JsonResponse($result, $result['added'] ? 201 : 200)),
             Endpoint\Endpoint::make('qotd-questions.starter')
                 ->route('POST', '/starter')
                 ->authenticated()
-                ->action(fn (Context $context) => $questions()->addMany(Starter::QUESTIONS, $context->getActor()))
+                ->action(fn (Context $context) => $this->questions()->addMany(Starter::QUESTIONS, $context->getActor()))
                 ->response(fn (Context $context, array $result) => new JsonResponse($result, $result['added'] ? 201 : 200)),
             Endpoint\Endpoint::make('qotd-questions.reminder')
                 ->route('POST', '/reminder')
                 ->authenticated()
-                ->action(fn (Context $context) => $questions()->remind((bool) ($context->body()['on'] ?? true), $context->getActor()))
+                ->action(fn (Context $context) => $this->questions()->remind((bool) ($context->body()['on'] ?? true), $context->getActor()))
                 ->response(fn (Context $context, bool $on) => new JsonResponse(['subscribed' => $on])),
         ];
     }
@@ -195,7 +203,7 @@ class QuestionResource extends AbstractDatabaseResource
     /** @param Context $context */
     public function creating(object $model, BaseContext $context): ?object
     {
-        resolve(Questions::class)->create($model, $this->attributes($context), $context->getActor());
+        $this->questions()->create($model, $this->attributes($context), $context->getActor());
 
         return $model;
     }
@@ -203,7 +211,7 @@ class QuestionResource extends AbstractDatabaseResource
     /** @param Context $context */
     public function updating(object $model, BaseContext $context): ?object
     {
-        resolve(Questions::class)->update($model, $this->attributes($context), $context->getActor());
+        $this->questions()->update($model, $this->attributes($context), $context->getActor());
 
         return $model;
     }
@@ -211,7 +219,7 @@ class QuestionResource extends AbstractDatabaseResource
     /** @param Context $context */
     public function saved(object $model, BaseContext $context): ?object
     {
-        resolve(Questions::class)->saved();
+        $this->questions()->saved();
 
         return $model;
     }
@@ -219,7 +227,7 @@ class QuestionResource extends AbstractDatabaseResource
     /** @param Context $context */
     public function delete(object $model, BaseContext $context): void
     {
-        resolve(Questions::class)->delete($model, $context->getActor());
+        $this->questions()->delete($model, $context->getActor());
     }
 
     /**
