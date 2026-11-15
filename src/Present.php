@@ -154,7 +154,12 @@ class Present
         if (! $question->closed_at || ! $question->top_answer_id || ! $actor->can(Settings::VIEW)) {
             return null;
         }
-        $answer = $question->relationLoaded('topAnswer') ? $question->topAnswer : Answer::query()->with('user')->find($question->top_answer_id);
+        // Only ever an answer to THIS question, which has closed: a stray top_answer_id can't open the gate.
+        $answer = $question->relationLoaded('topAnswer') ? $question->topAnswer
+            : Answer::query()->where('question_id', $question->id)->with('user')->find($question->top_answer_id);
+        if ($answer && $answer->question_id !== $question->id) {
+            return null;
+        }
 
         return $answer ? ($this->answers(new Collection([$answer]), $actor, $question)[0] ?? null) : null;
     }
