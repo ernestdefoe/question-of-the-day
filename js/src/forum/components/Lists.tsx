@@ -26,6 +26,12 @@ import {
 import { today } from '../store';
 import { face, who, logIn } from './parts';
 
+/** An icon-only button with its label as the tooltip and for screen readers. */
+function iconButton(icon: string, label: string, onclick: () => void, extra = '', disabled = false): Mithril.Children {
+  const text = extractText(t(label));
+  return <Button className={'Button Button--icon ' + extra} icon={icon} disabled={disabled} aria-label={text} title={text} onclick={onclick} />;
+}
+
 type ArchiveRow = QuestionRow & { answersCount: number; top: AnswerRow | null };
 
 /** Past questions, newest first, each with its winning answer. Twenty at a time. */
@@ -49,13 +55,20 @@ export class Archive extends Component {
           rows(d).map((row) => {
             const top = rel(d, row, 'topAnswer');
             const author = top ? personOf(rel(d, { _r: top }, 'user')) : null;
-            return {
-              ...(row as any),
+            const archived: ArchiveRow = {
+              id: row.id,
+              body: row.body,
+              askedOn: row.askedOn,
+              open: !!row.open,
+              closedAt: row.closedAt ?? null,
+              answersCount: row.answersCount ?? 0,
               suggestedBy: personOf(rel(d, row, 'user')),
+              discussion: null,
               top: top
                 ? ({ id: Number(top.id), body: top.attributes.body, author, reactionsCount: top.attributes.reactionsCount } as AnswerRow)
                 : null,
-            } as ArchiveRow;
+            };
+            return archived;
           })
         );
         this.more = !!d.links?.next;
@@ -295,40 +308,24 @@ export class Queue extends Component {
                 {' · '}
               </>
             ) : null}
-            {humanTime(row.createdAt as any)}
+            {humanTime(new Date(row.createdAt))}
             {row.mine ? <span className="QotdAnswer-you">{t('queue.yours')}</span> : null}
           </p>
         </div>
-        <div className="QotdQueue-actions">
-          {moderator ? (
-            <>
-              <Button
-                className="Button Button--primary Button--icon"
-                icon="fas fa-check"
-                aria-label={extractText(t('queue.approve'))}
-                title={extractText(t('queue.approve'))}
-                onclick={() => this.update(row, { status: 'approved' })}
-              />
-              <Button
-                className="Button Button--icon"
-                icon="fas fa-times"
-                aria-label={extractText(t('queue.reject'))}
-                title={extractText(t('queue.reject'))}
-                onclick={() => this.update(row, { status: 'rejected' })}
-              />
-            </>
-          ) : row.mine ? (
-            <Button
-              className="Button Button--icon Button--flat"
-              icon="far fa-trash-can"
-              aria-label={extractText(t('queue.withdraw'))}
-              title={extractText(t('queue.withdraw'))}
-              onclick={() => this.remove(row)}
-            />
-          ) : null}
-        </div>
+        <div className="QotdQueue-actions">{this.pendingActions(row, moderator)}</div>
       </li>
     );
+  }
+
+  /** Approve or reject for moderators; withdraw for the member who suggested it. */
+  pendingActions(row: QueueRow, moderator: boolean): Mithril.Children {
+    if (moderator) {
+      return [
+        iconButton('fas fa-check', 'queue.approve', () => this.update(row, { status: 'approved' }), 'Button--primary'),
+        iconButton('fas fa-times', 'queue.reject', () => this.update(row, { status: 'rejected' })),
+      ];
+    }
+    return row.mine ? iconButton('far fa-trash-can', 'queue.withdraw', () => this.remove(row), 'Button--flat') : null;
   }
 
   vote(row: QueueRow) {
@@ -422,7 +419,6 @@ export class Queue extends Component {
 
   pool(): Mithril.Children {
     const pool = this.data!.pool!;
-    const min = today.data?.today || '';
     return (
       <section className="QotdSection">
         <h3 className="QotdSection-title">
@@ -431,55 +427,46 @@ export class Queue extends Component {
         <p className="QotdSection-help">{t('pool.help')}</p>
         {(this.data!.poolCount || 0) < 3 ? <p className="QotdWarn">{t('pool.low')}</p> : null}
         {pool.length ? (
-          <ol className="QotdQueue-list QotdPool">
-            {pool.map((row, i) => (
-              <li className="QotdQueue-item" key={row.id}>
-                <span className={'QotdPool-pos' + (i === 0 ? ' QotdPool-pos--next' : '')}>{i === 0 ? t('pool.next') : i + 1}</span>
-                <div className="QotdQueue-main">
-                  <p className="QotdQueue-body">{row.body}</p>
-                  <p className="QotdQueue-meta">
-                    {row.author ? (
-                      <>
-                        {t('pool.suggested_by')} {who(row.author as Person)}
-                        {' · '}
-                      </>
-                    ) : null}
-                    {row.votes ? t('pool.votes', { count: row.votes }) : null}
-                  </p>
-                </div>
-                <div className="QotdQueue-actions QotdPool-actions">
-                  <input
-                    type="date"
-                    className="FormControl QotdPool-date"
-                    min={min}
-                    value={row.scheduledFor || ''}
-                    aria-label={extractText(t('pool.schedule'))}
-                    title={extractText(t('pool.schedule'))}
-                    onchange={(e: Event) => this.update(row, { scheduledFor: (e.target as HTMLInputElement).value || null })}
-                  />
-                  <Button
-                    className="Button Button--icon"
-                    icon="fas fa-bolt"
-                    disabled={this.data!.answeredToday}
-                    aria-label={extractText(t('pool.ask_now'))}
-                    title={extractText(t(this.data!.answeredToday ? 'pool.ask_now_locked' : 'pool.ask_now'))}
-                    onclick={() => this.askNow(row)}
-                  />
-                  <Button
-                    className="Button Button--icon Button--flat"
-                    icon="far fa-trash-can"
-                    aria-label={extractText(t('pool.delete'))}
-                    title={extractText(t('pool.delete'))}
-                    onclick={() => this.remove(row)}
-                  />
-                </div>
-              </li>
-            ))}
-          </ol>
+          <ol className="QotdQueue-list QotdPool">{pool.map((row, i) => this.poolRow(row, i))}</ol>
         ) : (
           <p className="QotdEmpty">{t('pool.empty')}</p>
         )}
       </section>
+    );
+  }
+
+  /** A pool question in its place in line, with schedule, ask now and delete. */
+  poolRow(row: QueueRow, i: number): Mithril.Children {
+    const locked = this.data!.answeredToday;
+    return (
+      <li className="QotdQueue-item" key={row.id}>
+        <span className={'QotdPool-pos' + (i === 0 ? ' QotdPool-pos--next' : '')}>{i === 0 ? t('pool.next') : i + 1}</span>
+        <div className="QotdQueue-main">
+          <p className="QotdQueue-body">{row.body}</p>
+          <p className="QotdQueue-meta">
+            {row.author ? (
+              <>
+                {t('pool.suggested_by')} {who(row.author as Person)}
+                {' · '}
+              </>
+            ) : null}
+            {row.votes ? t('pool.votes', { count: row.votes }) : null}
+          </p>
+        </div>
+        <div className="QotdQueue-actions QotdPool-actions">
+          <input
+            type="date"
+            className="FormControl QotdPool-date"
+            min={today.data?.today || ''}
+            value={row.scheduledFor || ''}
+            aria-label={extractText(t('pool.schedule'))}
+            title={extractText(t('pool.schedule'))}
+            onchange={(e: Event) => this.update(row, { scheduledFor: (e.target as HTMLInputElement).value || null })}
+          />
+          {iconButton('fas fa-bolt', locked ? 'pool.ask_now_locked' : 'pool.ask_now', () => this.askNow(row), '', locked)}
+          {iconButton('far fa-trash-can', 'pool.delete', () => this.remove(row), 'Button--flat')}
+        </div>
+      </li>
     );
   }
 

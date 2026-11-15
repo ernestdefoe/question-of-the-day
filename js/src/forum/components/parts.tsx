@@ -96,7 +96,7 @@ export class AnswerItem extends Component<ItemAttrs> {
           <div className="QotdAnswer-meta">
             {who(answer.author)}
             {answer.mine ? <span className="QotdAnswer-you">{t('answer.you')}</span> : null}
-            <span className="QotdAnswer-time">{humanTime(answer.createdAt as any)}</span>
+            <span className="QotdAnswer-time">{humanTime(new Date(answer.createdAt))}</span>
             {answer.edited ? <span className="QotdAnswer-edited">{t('answer.edited')}</span> : null}
           </div>
           {this.editing ? this.editor() : <p className="QotdAnswer-body">{answer.body}</p>}
@@ -259,5 +259,5 @@ export class AnswerList extends Component<ListAttrs> {
 
 /** Opens the log-in modal (a lazy chunk in Flarum 2). */
 export function logIn() {
-  app.modal.show(() => (globalThis as any).flarum.reg.asyncModuleImport('flarum/forum/components/LogInModal'));
+  app.modal.show(() => flarum.reg.asyncModuleImport('flarum/forum/components/LogInModal'));
 }

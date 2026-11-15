@@ -18,7 +18,7 @@ export class NewQuestionNotification extends Notification {
   }
 
   excerpt(): Mithril.Children {
-    return (this.attrs.notification as any).content()?.body;
+    return this.attrs.notification.content<{ body?: string }>()?.body;
   }
 }
 

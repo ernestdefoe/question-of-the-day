@@ -157,24 +157,7 @@ export default class QuestionCard extends Component<Attrs> {
 
     return (
       <form className="QotdCard-form" onsubmit={(e: SubmitEvent) => this.submit(e)}>
-        <label className="sr-only" for={`qotd-a-${question.id}`}>
-          {t('card.your_answer')}
-        </label>
-        <textarea
-          id={`qotd-a-${question.id}`}
-          className="FormControl QotdCard-input"
-          rows={2}
-          maxlength={max}
-          placeholder={extractText(t('card.placeholder'))}
-          value={this.draft}
-          oninput={(e: InputEvent) => {
-            this.draft = (e.target as HTMLTextAreaElement).value;
-            this.keepDraft();
-          }}
-          onkeydown={(e: KeyboardEvent) => {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) this.submit(e);
-          }}
-        />
+        {this.input(question.id, max)}
         <div className="QotdCard-formRow">
           {this.lock(count)}
           <span className={'QotdCard-left' + (left < 20 ? ' QotdCard-left--low' : '')} aria-live="polite">
@@ -186,6 +169,30 @@ export default class QuestionCard extends Component<Attrs> {
         </div>
       </form>
     );
+  }
+
+  /** The answer box. Ctrl/Cmd+Enter posts; the draft is kept for this tab. */
+  input(id: number, max: number): Mithril.Children {
+    return [
+      <label className="sr-only" for={`qotd-a-${id}`}>
+        {t('card.your_answer')}
+      </label>,
+      <textarea
+        id={`qotd-a-${id}`}
+        className="FormControl QotdCard-input"
+        rows={2}
+        maxlength={max}
+        placeholder={extractText(t('card.placeholder'))}
+        value={this.draft}
+        oninput={(e: InputEvent) => {
+          this.draft = (e.target as HTMLTextAreaElement).value;
+          this.keepDraft();
+        }}
+        onkeydown={(e: KeyboardEvent) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) this.submit(e);
+        }}
+      />,
+    ];
   }
 
   /** "🔒 12 answers, hidden until you post yours", with the answerers' faces. */

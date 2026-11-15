@@ -7,7 +7,9 @@ const t = (key: string, params: Record<string, any> = {}) => app.translator.tran
 /** Every IANA timezone the browser knows, the forum's current one first if it's unusual. */
 function timezones(): Record<string, string> {
   const options: Record<string, string> = { '': String(t('settings.timezone_utc')) };
-  const list: string[] = (Intl as any).supportedValuesOf ? (Intl as any).supportedValuesOf('timeZone') : [];
+  // Intl.supportedValuesOf is newer than the TypeScript lib Flarum targets: typed here, checked before use.
+  const intl = Intl as typeof Intl & { supportedValuesOf?: (key: 'timeZone') => string[] };
+  const list: string[] = intl.supportedValuesOf ? intl.supportedValuesOf('timeZone') : [];
   const current = String(app.data.settings['question-of-the-day.timezone'] || '');
   if (current && !list.includes(current)) list.unshift(current);
   for (const zone of list) options[zone] = zone.replace(/_/g, ' ');
@@ -61,7 +63,7 @@ export default [
     )
     .setting(
       () =>
-        'flarum-tags' in ((globalThis as any).flarum?.extensions || {})
+        'flarum-tags' in flarum.extensions
           ? {
               setting: 'question-of-the-day.tag',
               type: 'select',
