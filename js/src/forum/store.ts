@@ -1,8 +1,6 @@
 import app from 'flarum/forum/app';
 import { call, type AnswerRow, type ReactionType, type TodayData } from './api';
 
-declare const m: any;
-
 /**
  * Today's question, shared by the front-page card and the /question page so
  * both show the same thing and an answer posted on one shows on the other.
@@ -78,6 +76,7 @@ class TodayStore {
         question.answersCount = Math.max(0, (question.answersCount || 1) - 1);
       }
       m.redraw();
+      return undefined;
     });
   }
 

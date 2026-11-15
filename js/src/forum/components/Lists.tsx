@@ -8,6 +8,7 @@ import humanTime from 'flarum/common/helpers/humanTime';
 import extractText from 'flarum/common/utils/extractText';
 import type Mithril from 'mithril';
 import {
+  alreadyShown,
   call,
   doc,
   errorText,
@@ -24,8 +25,6 @@ import {
 } from '../api';
 import { today } from '../store';
 import { face, who, logIn } from './parts';
-
-declare const m: Mithril.Static;
 
 type ArchiveRow = QuestionRow & { answersCount: number; top: AnswerRow | null };
 
@@ -126,6 +125,7 @@ interface QueueData {
  */
 export class Queue extends Component {
   data: QueueData | null = null;
+  failed = false;
   draft = '';
   sending = false;
   bulk = '';
@@ -174,8 +174,11 @@ export class Queue extends Component {
           // "Ask this now" only replaces today's question while nobody has answered it.
           answeredToday: !!(question?.open && (question.answersCount || 0) > 0),
         };
+        this.failed = false;
       })
-      .catch(() => {})
+      .catch(() => {
+        this.failed = true;
+      })
       .finally(() => m.redraw());
   }
 
@@ -194,7 +197,7 @@ export class Queue extends Component {
         </div>
       );
     }
-    if (!this.data) return <LoadingIndicator />;
+    if (!this.data) return this.failed ? <p className="QotdEmpty">{t('errors.generic')}</p> : <LoadingIndicator />;
     const moderator = !!can?.moderate;
 
     return (
@@ -260,7 +263,7 @@ export class Queue extends Component {
         app.alerts.show({ type: 'success' }, t('queue.suggested'));
         return this.load();
       })
-      .catch(() => {})
+      .catch(alreadyShown)
       .finally(() => {
         this.sending = false;
         m.redraw();
@@ -354,7 +357,7 @@ export class Queue extends Component {
     call('PATCH', `/qotd-questions/${row.id}`, doc(body, row.id))
       .then(() => this.load())
       .then(() => today.load(true))
-      .catch(() => {})
+      .catch(alreadyShown)
       .finally(() => {
         this.busy[row.id] = false;
         m.redraw();
@@ -365,7 +368,7 @@ export class Queue extends Component {
     if (!confirm(extractText(t('queue.delete_confirm')))) return;
     call('DELETE', `/qotd-questions/${row.id}`)
       .then(() => this.load())
-      .catch(() => {});
+      .catch(alreadyShown);
   }
 
   addForm(): Mithril.Children {
@@ -410,7 +413,7 @@ export class Queue extends Component {
         app.alerts.show({ type: 'success' }, t('pool.added', { added: r.added, skipped: r.skipped }));
         return this.load().then(() => today.load(true));
       })
-      .catch(() => {})
+      .catch(alreadyShown)
       .finally(() => {
         this.adding = false;
         m.redraw();
@@ -498,6 +501,7 @@ interface StreakRow {
 /** Who's on a roll right now, and the longest runs ever. */
 export class Streaks extends Component {
   data: { going: StreakRow[]; best: StreakRow[]; me: { current: number; best: number; total: number } | null } | null = null;
+  failed = false;
 
   oninit(vnode: Mithril.Vnode<any, this>) {
     super.oninit(vnode);
@@ -512,12 +516,14 @@ export class Streaks extends Component {
       .then(([going, best]) => {
         this.data = { going, best, me: app.session.user && today.data ? today.data.streak : null };
       })
-      .catch(() => {})
+      .catch(() => {
+        this.failed = true;
+      })
       .finally(() => m.redraw());
   }
 
   view() {
-    if (!this.data) return <LoadingIndicator />;
+    if (!this.data) return this.failed ? <p className="QotdEmpty">{t('errors.generic')}</p> : <LoadingIndicator />;
     const { going, best, me } = this.data;
 
     return (

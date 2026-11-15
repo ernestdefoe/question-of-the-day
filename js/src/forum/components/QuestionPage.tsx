@@ -21,9 +21,6 @@ import { Archive, Queue, Streaks } from './Lists';
  * Built on core's page structure with the index sidebar, like any forum page.
  */
 
-declare const flarum: any;
-declare const m: Mithril.Static;
-
 export let PageStructure: any;
 export let IndexSidebar: any;
 

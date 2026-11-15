@@ -5,6 +5,7 @@ import Component from 'flarum/common/Component';
 import LinkButton from 'flarum/common/components/LinkButton';
 import type Mithril from 'mithril';
 import { chunk, loadChunk } from './load';
+import { readStored } from './storage';
 
 export { default as extend } from './extend';
 
@@ -15,18 +16,12 @@ export { default as extend } from './extend';
  * where the card or a question page shows.
  */
 
-declare const m: Mithril.Static;
-
 const t = (key: string, params: Record<string, any> = {}) => app.translator.trans(`ernestdefoe-question-of-the-day.forum.${key}`, params);
 
 /** A member who hid the card hides it until tomorrow (the card stores the forum's date). */
 const hiddenToday = () => {
-  try {
-    const until = localStorage.getItem('qotd-hidden-until');
-    return !!until && Date.now() < Number(until);
-  } catch (e) {
-    return false;
-  }
+  const until = readStored('localStorage', 'qotd-hidden-until');
+  return !!until && Date.now() < Number(until);
 };
 
 /** The front-page card's place: a quiet placeholder until the chunk and today's question arrive. */

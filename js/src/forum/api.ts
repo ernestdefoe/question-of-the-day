@@ -85,6 +85,14 @@ export function errorText(error: any): string {
   return extractText(t('errors.generic'));
 }
 
+/**
+ * For a .catch() after call() without `quiet`: its errorHandler has already shown the member
+ * the error (app.alerts), so the rejection only needs to stop here.
+ */
+export function alreadyShown(): void {
+  return undefined;
+}
+
 export function call<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: Record<string, any>, quiet = false): Promise<T> {
   return app.request<T>({
     method,

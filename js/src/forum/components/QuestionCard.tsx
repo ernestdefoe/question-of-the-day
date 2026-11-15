@@ -7,9 +7,8 @@ import extractText from 'flarum/common/utils/extractText';
 import type Mithril from 'mithril';
 import { dayLabel, t, until, type QuestionRow, type TodayData } from '../api';
 import { today } from '../store';
+import { readStored, writeStored } from '../storage';
 import { face, faces, who, logIn } from './parts';
-
-declare const m: Mithril.Static;
 
 interface Attrs {
   data: TodayData;
@@ -20,6 +19,15 @@ interface Attrs {
 }
 
 const DRAFT = 'qotd-draft';
+
+/** The unsent answer kept for this tab (survives a reload), or null. */
+function readDraft(): { id: number; text: string } | null {
+  try {
+    return JSON.parse(readStored('sessionStorage', DRAFT) || 'null');
+  } catch (error) {
+    return null;
+  }
+}
 
 /**
  * The question, big: the date, who suggested it, and then one of
@@ -34,10 +42,8 @@ export default class QuestionCard extends Component<Attrs> {
 
   oninit(vnode: Mithril.Vnode<Attrs, this>) {
     super.oninit(vnode);
-    try {
-      const saved = JSON.parse(sessionStorage.getItem(DRAFT) || 'null');
-      if (saved && saved.id === this.attrs.question.id) this.draft = saved.text || '';
-    } catch (e) {}
+    const saved = readDraft();
+    if (saved && saved.id === this.attrs.question.id) this.draft = saved.text || '';
   }
 
   oncreate(vnode: Mithril.VnodeDOM<Attrs, this>) {
@@ -241,9 +247,7 @@ export default class QuestionCard extends Component<Attrs> {
   }
 
   keepDraft() {
-    try {
-      sessionStorage.setItem(DRAFT, JSON.stringify({ id: this.attrs.question.id, text: this.draft }));
-    } catch (e) {}
+    writeStored('sessionStorage', DRAFT, JSON.stringify({ id: this.attrs.question.id, text: this.draft }));
   }
 
   submit(e: Event) {
@@ -254,9 +258,7 @@ export default class QuestionCard extends Component<Attrs> {
       .answer(this.draft)
       .then(() => {
         this.draft = '';
-        try {
-          sessionStorage.removeItem(DRAFT);
-        } catch (err) {}
+        writeStored('sessionStorage', DRAFT, null);
         this.attrs.onanswered?.();
       })
       .catch(() => {

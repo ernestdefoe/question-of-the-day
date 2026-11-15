@@ -5,6 +5,7 @@ import Icon from 'flarum/common/components/Icon';
 import type Mithril from 'mithril';
 import { t, type AnswerRow, type QuestionRow } from '../api';
 import { today } from '../store';
+import { writeStored } from '../storage';
 import QuestionCard from './QuestionCard';
 import { AnswerItem, face, who } from './parts';
 
@@ -52,9 +53,7 @@ export default class Hero extends Component {
   /** Hidden until the forum's next question (stored as that moment). */
   dismiss() {
     this.hidden = true;
-    try {
-      localStorage.setItem('qotd-hidden-until', String(new Date(today.data!.nextAt).getTime()));
-    } catch (e) {}
+    writeStored('localStorage', 'qotd-hidden-until', String(new Date(today.data!.nextAt).getTime()));
   }
 }
 

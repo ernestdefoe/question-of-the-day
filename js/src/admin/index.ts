@@ -1,5 +1,2 @@
-import app from 'flarum/admin/app';
-
+// The settings and permissions are registered through the extenders in extend.tsx; no initializer needed.
 export { default as extend } from './extend';
-
-app.initializers.add('ernestdefoe/question-of-the-day', () => {});

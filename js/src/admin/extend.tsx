@@ -2,8 +2,6 @@ import app from 'flarum/admin/app';
 import Extend from 'flarum/common/extenders';
 import type Mithril from 'mithril';
 
-declare const m: Mithril.Static;
-
 const t = (key: string, params: Record<string, any> = {}) => app.translator.trans(`ernestdefoe-question-of-the-day.admin.${key}`, params, true);
 
 /** Every IANA timezone the browser knows, the forum's current one first if it's unusual. */

@@ -5,10 +5,8 @@ import Link from 'flarum/common/components/Link';
 import humanTime from 'flarum/common/helpers/humanTime';
 import extractText from 'flarum/common/utils/extractText';
 import type Mithril from 'mithril';
-import { call, profileUrl, REACTIONS, t, type AnswerRow, type Person, type ReactionType } from '../api';
+import { alreadyShown, call, profileUrl, REACTIONS, t, type AnswerRow, type Person, type ReactionType } from '../api';
 import { react, today } from '../store';
-
-declare const m: Mithril.Static;
 
 export function face(person: Person | null, size = 32): Mithril.Children {
   const style = { width: size + 'px', height: size + 'px', fontSize: Math.round(size * 0.42) + 'px' };
@@ -163,7 +161,7 @@ export class AnswerItem extends Component<ItemAttrs> {
     today
       .edit(this.attrs.answer.id, this.draft)
       .then(() => (this.editing = false))
-      .catch(() => {})
+      .catch(alreadyShown)
       .finally(() => ((this.saving = false), m.redraw()));
   }
 
@@ -171,7 +169,7 @@ export class AnswerItem extends Component<ItemAttrs> {
     const { answer } = this.attrs;
     if (!confirm(extractText(t(answer.mine ? 'answer.delete_mine_confirm' : 'answer.delete_confirm')))) return;
     if (this.attrs.onremove) return this.attrs.onremove(answer);
-    today.remove(answer).catch(() => {});
+    today.remove(answer).catch(alreadyShown);
   }
 }
 
@@ -254,7 +252,7 @@ export class AnswerList extends Component<ListAttrs> {
         this.extra = this.extra.concat(page.answers.filter((a) => !seen.has(a.id)));
         this.more = page.hasMore;
       })
-      .catch(() => {})
+      .catch(alreadyShown)
       .finally(() => ((this.loadingMore = false), m.redraw()));
   }
 }
