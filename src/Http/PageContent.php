@@ -23,7 +23,7 @@ class PageContent
 
     public function __invoke(Document $document, ServerRequestInterface $request): Document
     {
-        $id = (int) ($request->getQueryParams()['id'] ?? 0);
+        $id = (int) (((array) $request->getAttribute('routeParameters', []))['id'] ?? 0);
         $title = (string) $this->translator->trans('ernestdefoe-question-of-the-day.forum.page.title');
         $document->title = $title;
         $document->canonicalUrl = $this->url->to('forum')->route('question-of-the-day');
