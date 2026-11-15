@@ -5,7 +5,6 @@ namespace ErnestDefoe\QuestionOfTheDay;
 use Flarum\Discussion\Discussion;
 use Flarum\Http\SlugManager;
 use Flarum\User\User;
-use Illuminate\Database\ConnectionInterface;
 use Illuminate\Support\Collection;
 
 /**
@@ -19,7 +18,6 @@ class Present
 
     public function __construct(
         private readonly SlugManager $slugs,
-        private readonly ConnectionInterface $db,
     ) {
     }
 
@@ -90,11 +88,11 @@ class Present
         }
 
         $counts = [];
-        foreach ($this->db->table('qotd_reactions')->whereIn('answer_id', $ids)->groupBy('answer_id', 'type')
+        foreach (Reaction::query()->toBase()->whereIn('answer_id', $ids)->groupBy('answer_id', 'type')
             ->select('answer_id', 'type')->selectRaw('count(*) as n')->get() as $row) {
             $counts[(int) $row->answer_id][$row->type] = (int) $row->n;
         }
-        $mine = $actor->isGuest() ? [] : $this->db->table('qotd_reactions')->whereIn('answer_id', $ids)->where('user_id', $actor->id)
+        $mine = $actor->isGuest() ? [] : Reaction::query()->whereIn('answer_id', $ids)->where('user_id', $actor->id)
             ->pluck('type', 'answer_id')->all();
 
         return $answers->map(function (Answer $answer) use ($counts, $mine, $actor, $question) {

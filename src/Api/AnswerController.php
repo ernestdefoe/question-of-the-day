@@ -4,6 +4,8 @@ namespace ErnestDefoe\QuestionOfTheDay\Api;
 
 use Carbon\Carbon;
 use ErnestDefoe\QuestionOfTheDay\Answer;
+use ErnestDefoe\QuestionOfTheDay\Locks;
+use ErnestDefoe\QuestionOfTheDay\Reaction;
 use ErnestDefoe\QuestionOfTheDay\Question;
 use ErnestDefoe\QuestionOfTheDay\Rotator;
 use ErnestDefoe\QuestionOfTheDay\Settings;
@@ -11,7 +13,6 @@ use ErnestDefoe\QuestionOfTheDay\Streaks;
 use ErnestDefoe\QuestionOfTheDay\Today;
 use Flarum\Http\RequestUtil;
 use Flarum\Settings\SettingsRepositoryInterface;
-use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Laminas\Diactoros\Response\EmptyResponse;
 use Laminas\Diactoros\Response\JsonResponse;
@@ -31,7 +32,7 @@ class AnswerController implements RequestHandlerInterface
         private readonly Streaks $streaks,
         private readonly Today $today,
         private readonly SettingsRepositoryInterface $settings,
-        private readonly ConnectionInterface $db,
+        private readonly Locks $locks,
         private readonly RateLimit $limits,
     ) {
     }
@@ -69,20 +70,23 @@ class AnswerController implements RequestHandlerInterface
             return Errors::make(409, 'already_answered');
         }
 
-        // The unique index settles a double submit. In its own transaction (a savepoint inside an
-        // outer one), because on PostgreSQL a failed statement otherwise aborts the whole transaction.
+        // The answer and its streak credit land together, under the member's streak lock (a cache lock
+        // plus a transaction: lockForUpdate does nothing on SQLite). The unique index still settles a
+        // double submit; the transaction is a savepoint inside any outer one, so on PostgreSQL the
+        // failed insert doesn't abort it.
         try {
-            $answer = new Answer();
-            $answer->question_id = $question->id;
-            $answer->user_id = $actor->id;
-            $answer->body = $body;
-            $answer->created_at = Carbon::now();
-            $this->db->transaction(fn () => $answer->save());
+            $this->locks->run(Streaks::lock($actor->id), function () use ($question, $actor, $body) {
+                $answer = new Answer();
+                $answer->question_id = $question->id;
+                $answer->user_id = $actor->id;
+                $answer->body = $body;
+                $answer->created_at = Carbon::now();
+                $answer->save();
+                $this->streaks->credit($actor->id, $question);
+            });
         } catch (UniqueConstraintViolationException) {
             return Errors::make(409, 'already_answered');
         }
-
-        $this->streaks->record($actor->id, $question);
 
         return new JsonResponse($this->today->payload($actor, Input::sort($request)), 201);
     }
@@ -129,14 +133,14 @@ class AnswerController implements RequestHandlerInterface
             return Errors::make(403, 'permission_denied');
         }
 
-        $this->db->transaction(function () use ($answer) {
-            $this->db->table('qotd_reactions')->where('answer_id', $answer->id)->delete();
+        // While the question is up, an answer taken away takes its streak credit with it, in the same step.
+        $this->locks->run(Streaks::lock($answer->user_id), function () use ($answer, $question) {
+            Reaction::query()->where('answer_id', $answer->id)->delete();
             $answer->delete();
+            if ($question->isOpen()) {
+                $this->streaks->takeBack($answer->user_id, $question);
+            }
         });
-        // While the question is up, an answer taken away takes its streak credit with it.
-        if ($question->isOpen()) {
-            $this->streaks->undo($answer->user_id, $question);
-        }
 
         if ($question->top_answer_id === $answer->id) {
             $this->rotator->refreshTop($question);

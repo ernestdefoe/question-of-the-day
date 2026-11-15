@@ -125,7 +125,7 @@ class Delivery
 
         for ($i = 0; $i < $chunks; $i++) {
             $chunk = User::query()
-                ->whereIn('id', fn ($q) => $q->select('user_id')->from('qotd_subscriptions'))
+                ->whereIn('id', Subscription::query()->select('user_id'))
                 ->where('id', '>', $question->notify_cursor)
                 ->when(! $everyone, fn ($q) => $q->whereHas('groups', fn ($g) => $g->whereIn('groups.id', $groups)))
                 ->orderBy('id')->limit($chunkSize)->get();

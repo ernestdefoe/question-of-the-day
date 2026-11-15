@@ -6,7 +6,6 @@ use Carbon\Carbon;
 use ErnestDefoe\QuestionOfTheDay\Job\Deliver;
 use Illuminate\Contracts\Cache\Repository as Cache;
 use Illuminate\Contracts\Queue\Queue;
-use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Database\UniqueConstraintViolationException;
 
@@ -30,7 +29,7 @@ class Rotator
     public function __construct(
         private readonly Day $day,
         private readonly Cache $cache,
-        private readonly ConnectionInterface $db,
+        private readonly Locks $locks,
         private readonly Queue $queue,
         private readonly Delivery $delivery,
     ) {
@@ -73,7 +72,7 @@ class Rotator
         }
 
         try {
-            $won = $this->db->transaction(function () use ($next, $current, $today) {
+            $won = $this->locks->run('rotate', function () use ($next, $current, $today) {
                 $won = Question::query()->whereKey($next->id)->inPool()->update([
                     'asked_on' => $today,
                     'prev_asked_on' => $current?->asked_on,
@@ -110,7 +109,7 @@ class Rotator
      */
     public function swap(Question $pick): bool
     {
-        $swapped = $this->db->transaction(function () use ($pick) {
+        $swapped = $this->locks->run('rotate', function () use ($pick) {
             // The day and today's question are read here, under the lock: a swap racing midnight
             // must not put yesterday's question back or leave one open beside the new day's.
             $today = $this->day->today();

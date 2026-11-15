@@ -6,7 +6,6 @@ use Carbon\Carbon;
 use ErnestDefoe\QuestionOfTheDay\Api\Input;
 use ErnestDefoe\QuestionOfTheDay\Api\RateLimit;
 use Flarum\User\User;
-use Illuminate\Database\ConnectionInterface;
 
 /**
  * The question pool's rules, for the qotd-questions resource: members suggest
@@ -21,7 +20,6 @@ class Questions
         private readonly Day $day,
         private readonly Streaks $streaks,
         private readonly RateLimit $limits,
-        private readonly ConnectionInterface $db,
     ) {
     }
 
@@ -94,7 +92,7 @@ class Questions
                 if (! $moderator) {
                     throw new Refusal('has_votes', 409);
                 }
-                $this->db->table('qotd_votes')->where('question_id', $question->id)->delete();
+                Vote::query()->where('question_id', $question->id)->delete();
                 $question->votes_count = 0;
             }
             $question->body = $text;
@@ -158,10 +156,10 @@ class Questions
         }
 
         if ($vote) {
-            if ($this->db->table('qotd_votes')->insertOrIgnore(['question_id' => $question->id, 'user_id' => $actor->id, 'created_at' => Carbon::now()]) === 1) {
+            if (Vote::query()->insertOrIgnore(['question_id' => $question->id, 'user_id' => $actor->id, 'created_at' => Carbon::now()]) === 1) {
                 Question::query()->whereKey($question->id)->increment('votes_count');
             }
-        } elseif ($this->db->table('qotd_votes')->where('question_id', $question->id)->where('user_id', $actor->id)->delete() === 1) {
+        } elseif (Vote::query()->where('question_id', $question->id)->where('user_id', $actor->id)->delete() === 1) {
             Question::query()->whereKey($question->id)->where('votes_count', '>', 0)->decrement('votes_count');
         }
 
@@ -231,8 +229,8 @@ class Questions
         $actor->assertRegistered();
         $actor->assertCan(Settings::VIEW);
         $on
-            ? $this->db->table('qotd_subscriptions')->insertOrIgnore(['user_id' => $actor->id, 'created_at' => Carbon::now()])
-            : $this->db->table('qotd_subscriptions')->where('user_id', $actor->id)->delete();
+            ? Subscription::query()->insertOrIgnore(['user_id' => $actor->id, 'created_at' => Carbon::now()])
+            : Subscription::query()->where('user_id', $actor->id)->delete();
 
         return $on;
     }

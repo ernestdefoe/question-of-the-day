@@ -41,7 +41,7 @@ class Today
                 'best' => $streak ? $streak->best : 0,
                 'total' => $streak ? $streak->total : 0,
             ],
-            'subscribed' => ! $actor->isGuest() && Question::query()->getConnection()->table('qotd_subscriptions')->where('user_id', $actor->id)->exists(),
+            'subscribed' => ! $actor->isGuest() && Subscription::query()->where('user_id', $actor->id)->exists(),
             'nextAt' => $this->day->nextMidnight()->toIso8601String(),
             'today' => $this->day->today(),
             'maxLength' => self::maxLength($this->settings),

@@ -3,8 +3,8 @@
 namespace ErnestDefoe\QuestionOfTheDay\Api\Resource;
 
 use ErnestDefoe\QuestionOfTheDay\Answer;
+use ErnestDefoe\QuestionOfTheDay\Vote;
 use Flarum\User\User;
-use Illuminate\Database\ConnectionInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use WeakMap;
 
@@ -20,7 +20,7 @@ class QuestionBatch
     /** @var WeakMap<ServerRequestInterface, array{ids: array<int, true>, voted: array<int, true>|null, answers: array<int, int>|null}> */
     private WeakMap $state;
 
-    public function __construct(private readonly ConnectionInterface $db)
+    public function __construct()
     {
         $this->state = new WeakMap();
     }
@@ -33,7 +33,7 @@ class QuestionBatch
             $state = $this->state[$request];
             if ($state['voted'] === null) {
                 $state['voted'] = $actor->isGuest() ? [] : array_fill_keys(
-                    $this->db->table('qotd_votes')->where('user_id', $actor->id)->whereIn('question_id', array_keys($state['ids']))
+                    Vote::query()->where('user_id', $actor->id)->whereIn('question_id', array_keys($state['ids']))
                         ->pluck('question_id')->map(fn ($v) => (int) $v)->all(),
                     true
                 );

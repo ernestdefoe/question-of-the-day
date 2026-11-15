@@ -575,4 +575,28 @@ class QuestionOfTheDayTest extends TestCase
         $this->assertStringContainsString('TODAYS-SECRET', $this->api('GET', '', 2)[2]);
         $this->assertStringNotContainsString('TODAYS-SECRET', $this->res('GET', '/2', 2, [], ['include' => 'topAnswer'])[2]);
     }
+
+    #[Test]
+    public function an_answer_waits_for_the_members_streak_lock_and_writes_nothing_if_it_cant_get_it(): void
+    {
+        // Real time throughout: a lock's wait is measured with now(), which the other tests freeze.
+        Carbon::setTestNow();
+        $id = $this->api('GET', '', 2)[1]['question']['id'];
+        $store = $this->app()->getContainer()->make(\Illuminate\Contracts\Cache\Repository::class)->getStore();
+        $this->assertInstanceOf(\Illuminate\Contracts\Cache\LockProvider::class, $store, 'the test forum\'s cache store takes locks');
+
+        // Another request holds Dana's streak lock (as a racing answer or deletion would).
+        $held = $store->lock('ernestdefoe-qotd.lock.'.\ErnestDefoe\QuestionOfTheDay\Streaks::lock(3), 30);
+        $this->assertTrue($held->get());
+        [$status, $body] = $this->api('POST', "/questions/$id/answers", 3, ['body' => 'Blocked']);
+        $this->assertSame(429, $status);
+        $this->assertSame('slow_down', $body['errors'][0]['code']);
+        $this->assertSame(0, Answer::query()->where('user_id', 3)->count(), 'neither the answer…');
+        $this->assertNull(Streak::query()->find(3), '…nor its credit');
+
+        // Released: the answer and its credit go in together.
+        $held->release();
+        $this->assertSame(201, $this->api('POST', "/questions/$id/answers", 3, ['body' => 'Through'])[0]);
+        $this->assertSame(1, Streak::query()->find(3)->current);
+    }
 }
