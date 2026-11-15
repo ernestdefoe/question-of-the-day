@@ -32,6 +32,7 @@ class Rotator
         private readonly Cache $cache,
         private readonly ConnectionInterface $db,
         private readonly Queue $queue,
+        private readonly Delivery $delivery,
     ) {
     }
 
@@ -146,7 +147,7 @@ class Rotator
             return false;
         }
 
-        resolve(Delivery::class)->retract($swapped);
+        $this->delivery->retract($swapped);
         $this->queue->push(new Deliver());
 
         return true;
