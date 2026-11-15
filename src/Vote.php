@@ -15,6 +15,4 @@ class Vote extends AbstractModel
     public $incrementing = false;
 
     protected $primaryKey = 'question_id';
-
-    protected $guarded = [];
 }

@@ -6,7 +6,6 @@ use Carbon\Carbon;
 use ErnestDefoe\QuestionOfTheDay\Job\Deliver;
 use Illuminate\Contracts\Cache\Repository as Cache;
 use Illuminate\Contracts\Queue\Queue;
-use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Database\UniqueConstraintViolationException;
 
 /**
@@ -158,18 +157,6 @@ class Rotator
         return Question::query()->inPool()->whereNotNull('scheduled_for')->where('scheduled_for', '<=', $today)
             ->orderBy('scheduled_for')->orderBy('id')->first()
             ?? $this->unscheduled()->first();
-    }
-
-    /**
-     * The pool in the order it will be asked, for moderators: scheduled ones by date, then the rest.
-     *
-     * @return EloquentCollection<int, Question>
-     */
-    public function upcoming(int $limit): EloquentCollection
-    {
-        $scheduled = Question::query()->inPool()->whereNotNull('scheduled_for')->orderBy('scheduled_for')->orderBy('id')->limit($limit)->get();
-
-        return new EloquentCollection($scheduled->concat($this->unscheduled()->limit($limit)->get())->take($limit)->values()->all());
     }
 
     /** @return \Illuminate\Database\Eloquent\Builder<Question> */

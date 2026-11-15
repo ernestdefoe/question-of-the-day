@@ -15,6 +15,4 @@ class Reaction extends AbstractModel
     public $incrementing = false;
 
     protected $primaryKey = 'answer_id';
-
-    protected $guarded = [];
 }

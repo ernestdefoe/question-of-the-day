@@ -599,4 +599,24 @@ class QuestionOfTheDayTest extends TestCase
         $this->assertSame(201, $this->api('POST', "/questions/$id/answers", 3, ['body' => 'Through'])[0]);
         $this->assertSame(1, Streak::query()->find(3)->current);
     }
+
+    #[Test]
+    public function with_tags_on_the_daily_discussion_goes_in_the_admins_tag(): void
+    {
+        $this->extension('flarum-tags');
+        $this->prepareDatabase([
+            'tags' => [['id' => 7, 'name' => 'Daily', 'slug' => 'daily', 'position' => 0, 'parent_id' => null]],
+        ]);
+        $this->setting(Settings::DISCUSSION, '1');
+        $this->setting(Settings::TAG, '7');
+
+        $this->api('GET', '', 2);
+        $container = $this->app()->getContainer();
+        $this->assertInstanceOf(\ErnestDefoe\QuestionOfTheDay\Tags\TagsInFlarum::class, $container->make(\ErnestDefoe\QuestionOfTheDay\Tags\DiscussionTags::class));
+        $container->make(Delivery::class)->run();
+
+        $discussion = Discussion::query()->find(Question::query()->find(2)->discussion_id);
+        $this->assertNotNull($discussion);
+        $this->assertSame([7], $this->database()->table('discussion_tag')->where('discussion_id', $discussion->id)->pluck('tag_id')->map(fn ($id) => (int) $id)->all());
+    }
 }

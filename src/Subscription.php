@@ -15,6 +15,4 @@ class Subscription extends AbstractModel
     public $incrementing = false;
 
     protected $primaryKey = 'user_id';
-
-    protected $guarded = [];
 }

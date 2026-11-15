@@ -68,6 +68,24 @@ class Streaks
         return $streak;
     }
 
+    /**
+     * Takes back every credit $question gave (a moderator deleted the question while it was up), in
+     * one statement: each streak whose last credit was this question gets its previous state back.
+     */
+    public function takeBackAll(Question $question): int
+    {
+        $query = Streak::query()->where('last_question_id', $question->id);
+        $column = fn (string $name) => $query->getQuery()->raw($query->getQuery()->getGrammar()->wrap($name));
+
+        return $this->locks->run('streaks.question.'.$question->id, fn () => $query->update([
+            'current' => $column('prev_current'),
+            'best' => $column('prev_best'),
+            'total' => $column('prev_total'),
+            'last_day' => $column('prev_last_day'),
+            'last_question_id' => $column('prev_last_question_id'),
+        ]));
+    }
+
     /** Takes back the credit of an answer to $question (deleted while the question was up); the caller holds self::lock(). */
     public function takeBack(int $userId, Question $question): void
     {

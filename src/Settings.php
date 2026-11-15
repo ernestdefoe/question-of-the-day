@@ -9,8 +9,6 @@ final class Settings
     public const SUGGEST = 'question-of-the-day.suggest';
     public const MODERATE = 'question-of-the-day.moderate';
 
-    public const NAV = 'question-of-the-day.nav';
-    public const HERO = 'question-of-the-day.hero';
     public const TIMEZONE = 'question-of-the-day.timezone';
     public const MAX_LENGTH = 'question-of-the-day.max_length';
     public const DISCUSSION = 'question-of-the-day.discussion';

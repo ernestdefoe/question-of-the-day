@@ -134,8 +134,7 @@ class Questions
 
         // Deleting the question that's up takes its answers' streak credit back first.
         if ($question->isOpen()) {
-            Answer::query()->where('question_id', $question->id)->pluck('user_id')
-                ->each(fn ($userId) => $this->streaks->undo((int) $userId, $question));
+            $this->streaks->takeBackAll($question);
         }
         $question->delete();
         $this->rotator->forget();
