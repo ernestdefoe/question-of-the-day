@@ -88,7 +88,8 @@ export function errorText(error: any): string {
 export function call<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: Record<string, any>, quiet = false): Promise<T> {
   return app.request<T>({
     method,
-    url: app.forum.attribute<string>('apiUrl') + '/qotd' + path,
+    // '/qotd-questions…' and '/qotd-streaks…' are the JSON:API resources; anything else is under /api/qotd.
+    url: app.forum.attribute<string>('apiUrl') + (path.startsWith('/qotd-') ? path : '/qotd' + path),
     body,
     errorHandler: (error: any) => {
       if (!quiet) app.alerts.show({ type: 'error' }, errorText(error));
@@ -126,4 +127,41 @@ export function until(iso: string): string {
 
 export function profileUrl(person: Person): string {
   return app.route('user', { username: person.slug });
+}
+
+/** A JSON:API document from the qotd-questions / qotd-streaks resources. */
+export interface Doc {
+  data: Resource | Resource[];
+  included?: Resource[];
+  links?: { next?: string };
+}
+
+interface Resource {
+  type: string;
+  id: string;
+  attributes: Record<string, any>;
+  relationships?: Record<string, { data: { type: string; id: string } | null }>;
+}
+
+/** The document's rows, flat: id plus attributes, with `rel(row, name)` to reach what was included. */
+export function rows(doc: Doc): (Record<string, any> & { id: number; _r: Resource })[] {
+  const list = Array.isArray(doc.data) ? doc.data : [doc.data];
+  return list.map((r) => ({ ...r.attributes, id: Number(r.id), _r: r }));
+}
+
+export function rel(doc: Doc, row: { _r: Resource }, name: string): Resource | null {
+  const link = row._r.relationships?.[name]?.data;
+  return (link && doc.included?.find((i) => i.type === link.type && i.id === link.id)) || null;
+}
+
+/** A `users` resource as the small Person the components draw. */
+export function personOf(user: Resource | null): Person | null {
+  if (!user) return null;
+  const a = user.attributes;
+  return { id: Number(user.id), name: a.displayName || a.username, username: a.username, slug: a.slug || a.username, avatar: a.avatarUrl || null };
+}
+
+/** A JSON:API body for the qotd-questions resource. */
+export function doc(attributes: Record<string, any>, id?: number) {
+  return { data: { type: 'qotd-questions', ...(id ? { id: String(id) } : {}), attributes } };
 }

@@ -63,7 +63,7 @@ class QuestionOfTheDayTest extends TestCase
         if ($method !== 'GET') {
             $options['json'] = $body;
         }
-        $request = $this->request($method, '/api/qotd'.$path, $options);
+        $request = $this->request($method, str_starts_with($path, '/api/') ? $path : '/api/qotd'.$path, $options);
         if ($query) {
             $request = $request->withQueryParams($query);
         }
@@ -71,6 +71,24 @@ class QuestionOfTheDayTest extends TestCase
         $raw = (string) $response->getBody();
 
         return [$response->getStatusCode(), json_decode($raw, true), $raw];
+    }
+
+    /** The qotd-questions resource: $path after /api/qotd-questions. */
+    private function res(string $method, string $path, ?int $as, array $body = [], array $query = []): array
+    {
+        return $this->api($method, '/api/qotd-questions'.$path, $as, $body, $query);
+    }
+
+    /** A JSON:API document for the qotd-questions resource. */
+    private function doc(array $attributes, ?int $id = null): array
+    {
+        return ['data' => array_filter(['type' => 'qotd-questions', 'id' => $id ? (string) $id : null, 'attributes' => $attributes])];
+    }
+
+    /** @return list<int> */
+    private function ids(array $document): array
+    {
+        return array_map(fn ($row) => (int) $row['id'], $document['data'] ?? []);
     }
 
     private function moveTo(string $when): void
@@ -108,8 +126,8 @@ class QuestionOfTheDayTest extends TestCase
         $this->assertSame(3, $this->api('GET', '', 2)[1]['question']['id']);
 
         // Scheduled through the API (as a moderator does), for tomorrow: not before.
-        $this->assertSame(422, $this->api('PATCH', '/questions/1', 5, ['scheduledFor' => '2026-11-09'])[0]);
-        $this->assertSame(200, $this->api('PATCH', '/questions/1', 5, ['scheduledFor' => '2026-11-11'])[0]);
+        $this->assertSame(422, $this->res('PATCH', '/1', 5, $this->doc(['scheduledFor' => '2026-11-09'], 1))[0]);
+        $this->assertSame(200, $this->res('PATCH', '/1', 5, $this->doc(['scheduledFor' => '2026-11-11'], 1))[0]);
         $this->moveTo('2026-11-11 07:00:00');
         $this->assertSame(1, $this->api('GET', '', 2)[1]['question']['id'], 'ahead of the more upvoted one');
     }
@@ -123,8 +141,8 @@ class QuestionOfTheDayTest extends TestCase
 
         // Nobody else sees it anywhere: not a member, not a guest, not a moderator who hasn't answered.
         foreach ([2, 4, 5, null] as $viewer) {
-            foreach (['', '/questions/2', '/archive', '/streaks'] as $path) {
-                [, $body, $raw] = $this->api('GET', $path, $viewer);
+            foreach ([['', []], ['/questions/2', []], ['/api/qotd-questions', ['filter' => ['list' => 'archive'], 'include' => 'topAnswer,topAnswer.user']], ['/api/qotd-questions/2', ['include' => 'topAnswer,user']], ['/api/qotd-streaks', ['include' => 'user']]] as [$path, $query]) {
+                [, $body, $raw] = $this->api('GET', $path, $viewer, [], $query);
                 $this->assertStringNotContainsString('suspicious cheese', $raw, "$path as ".var_export($viewer, true));
             }
             $this->assertSame($viewer ? 403 : 403, $this->api('GET', '/questions/2/answers', $viewer)[0]);
@@ -239,60 +257,63 @@ class QuestionOfTheDayTest extends TestCase
     #[Test]
     public function members_suggest_and_vote_moderators_approve_and_the_pool_stays_a_surprise(): void
     {
-        [$status] = $this->api('POST', '/questions', 2, ['body' => '  What is   your favorite   board game?  ']);
+        [$status] = $this->res('POST', '', 2, $this->doc(['body' => '  What is   your favorite   board game?  ']));
         $this->assertSame(201, $status);
         $this->assertSame('What is your favorite board game?', Question::query()->latest('id')->value('body'));
-        $this->assertSame(409, $this->api('POST', '/questions', 3, ['body' => 'what is your favorite board game?'])[0], 'duplicate');
-        $this->assertSame(422, $this->api('POST', '/questions', 3, ['body' => 'Hi?'])[0]);
+        $this->assertSame(409, $this->res('POST', '', 3, $this->doc(['body' => 'what is your favorite board game?']))[0], 'duplicate');
+        $this->assertSame(422, $this->res('POST', '', 3, $this->doc(['body' => 'Hi?']))[0]);
+        $this->assertSame('pending', Question::query()->latest('id')->value('status'));
 
         // Votes: once each, never your own.
-        $this->assertSame(403, $this->api('POST', '/questions/4/vote', 3, ['vote' => true])[0]);
-        $this->api('POST', '/questions/4/vote', 2, ['vote' => true]);
-        $this->api('POST', '/questions/4/vote', 2, ['vote' => true]);
-        $this->assertSame(1, Question::query()->find(4)->votes_count);
-        $this->api('POST', '/questions/4/vote', 2, ['vote' => false]);
+        $this->assertSame(403, $this->res('POST', '/4/vote', 3, ['vote' => true])[0]);
+        $this->res('POST', '/4/vote', 2, ['vote' => true]);
+        [$status, $voted] = $this->res('POST', '/4/vote', 2, ['vote' => true]);
+        $this->assertSame(200, $status);
+        $this->assertSame([1, true], [$voted['data']['attributes']['votesCount'], $voted['data']['attributes']['voted']]);
+        $this->res('POST', '/4/vote', 2, ['vote' => false]);
         $this->assertSame(0, Question::query()->find(4)->votes_count);
-        $this->assertSame(404, $this->api('POST', '/questions/1/vote', 2, ['vote' => true])[0], 'only suggestions waiting in the queue');
+        $this->assertSame(404, $this->res('POST', '/1/vote', 2, ['vote' => true])[0], 'the pool is not even visible to members');
 
-        [, $queue] = $this->api('GET', '/queue', 2);
-        $this->assertNull($queue['pool']);
-        $this->assertCount(2, $queue['pending']);
-        $this->assertSame(403, $this->api('GET', '/queue', null)[0]);
+        // The queue is members' suggestions; the pool is only for moderators.
+        $this->assertCount(2, $this->ids($this->res('GET', '', 2, [], ['filter' => ['list' => 'queue']])[1]));
+        $this->assertSame([], $this->ids($this->res('GET', '', 2, [], ['filter' => ['list' => 'pool']])[1]));
+        $this->assertSame([], $this->ids($this->res('GET', '', null, [], ['filter' => ['list' => 'queue']])[1]), 'guests don\'t see the queue');
+        $this->assertSame(404, $this->res('GET', '/1', 2)[0], 'a pool question by id, as a member');
 
         // Members can't approve, not even their own.
-        $this->assertSame(404, $this->api('PATCH', '/questions/4', 2, ['status' => 'approved'])[0]);
-        $this->api('PATCH', '/questions/4', 3, ['status' => 'approved']);
+        $this->assertSame(403, $this->res('PATCH', '/4', 2, $this->doc(['status' => 'approved'], 4))[0]);
+        $this->res('PATCH', '/4', 3, $this->doc(['status' => 'approved'], 4));
         $this->assertSame('pending', Question::query()->find(4)->status);
 
-        $this->api('PATCH', '/questions/4', 5, ['status' => 'approved']);
-        [, $queue] = $this->api('GET', '/queue', 5);
-        $this->assertSame(3, $queue['poolCount'], '1, 3 and 4: 2 went up today');
+        $this->assertSame(200, $this->res('PATCH', '/4', 5, $this->doc(['status' => 'approved'], 4))[0]);
+        $this->assertSame([2, 1, 3, 4], $this->ids($this->res('GET', '', 5, [], ['filter' => ['list' => 'pool']])[1]), 'in the order they will be asked: most votes, then oldest approved (4 lost its vote)');
 
         // Moderators add a batch straight to the pool, skipping duplicates.
-        [$status, $added] = $this->api('POST', '/questions', 5, ['body' => "Sweet or savory breakfast?\nMountains or beach?\nx"]);
+        [$status, $added] = $this->res('POST', '/add', 5, ['bodies' => ['Sweet or savory breakfast?', 'Mountains or beach?', 'x']]);
         $this->assertSame(['added' => 1, 'skipped' => 2], $added);
-        $this->assertSame(403, $this->api('POST', '/starter', 2)[0]);
+        $this->assertSame(403, $this->res('POST', '/starter', 2)[0]);
+        $this->assertSame(403, $this->res('POST', '/add', 2, ['bodies' => ['A member adding straight to the pool?']])[0]);
     }
 
     #[Test]
     public function ask_now_swaps_todays_question_only_before_anyone_answers(): void
     {
         $this->api('GET', '', 2);
-        $this->assertSame(200, $this->api('POST', '/questions/3/ask', 5)[0]);
+        $this->assertSame(200, $this->res('POST', '/3/ask', 5)[0]);
         $this->assertSame(3, $this->api('GET', '', 2)[1]['question']['id']);
         $this->assertNull(Question::query()->find(2)->asked_on, 'back in the pool');
 
         $this->api('POST', '/questions/3/answers', 2, ['body' => 'Beach']);
-        $this->assertSame(409, $this->api('POST', '/questions/1/ask', 5)[0]);
-        $this->assertSame(403, $this->api('POST', '/questions/1/ask', 2)[0]);
+        $this->assertSame(409, $this->res('POST', '/1/ask', 5)[0]);
+        $this->assertSame(404, $this->res('POST', '/1/ask', 2)[0], 'members can\'t see the pool, let alone ask from it');
     }
 
     #[Test]
     public function delivery_alerts_subscribers_once_and_posts_one_discussion(): void
     {
         $this->setting(Settings::DISCUSSION, '1');
-        $this->api('POST', '/subscription', 3, ['on' => true]);
-        $this->api('POST', '/subscription', 4, ['on' => true]);
+        $this->assertSame(200, $this->res('POST', '/reminder', 3, ['on' => true])[0]);
+        $this->res('POST', '/reminder', 4, ['on' => true]);
         $this->api('GET', '', 2);
 
         $delivery = $this->app()->getContainer()->make(Delivery::class);
@@ -319,7 +340,7 @@ class QuestionOfTheDayTest extends TestCase
         $this->api('POST', '/questions/2/answers', 3, ['body' => 'Theirs']);
         $theirs = Answer::query()->where('user_id', 3)->first();
         $this->api('POST', "/answers/{$theirs->id}/react", 2, ['type' => 'love']);
-        $this->api('POST', '/questions/4/vote', 2, ['vote' => true]);
+        $this->res('POST', '/4/vote', 2, ['vote' => true]);
 
         $response = $this->send($this->request('DELETE', '/api/users/2', ['authenticatedAs' => 1]));
         $this->assertSame(204, $response->getStatusCode());
@@ -334,7 +355,7 @@ class QuestionOfTheDayTest extends TestCase
     {
         $this->database()->table('group_permission')->where('permission', Settings::VIEW)->delete();
         $this->assertSame(403, $this->api('GET', '', null)[0]);
-        $this->assertSame(403, $this->api('GET', '/archive', 2)[0]);
+        $this->assertSame([], $this->ids($this->res('GET', '', 2)[1]), 'an empty archive');
 
         $this->app()->getContainer()->make(Rotator::class)->rotate('2026-11-10');
         $page = (string) $this->send($this->request('GET', '/question/2'))->getBody();
@@ -345,7 +366,7 @@ class QuestionOfTheDayTest extends TestCase
     public function ask_now_takes_back_what_delivery_already_did(): void
     {
         $this->setting(Settings::DISCUSSION, '1');
-        $this->api('POST', '/subscription', 3, ['on' => true]);
+        $this->res('POST', '/reminder', 3, ['on' => true]);
         $this->api('GET', '', 2);
         $delivery = $this->app()->getContainer()->make(Delivery::class);
         $delivery->run();
@@ -353,7 +374,7 @@ class QuestionOfTheDayTest extends TestCase
         $this->assertNotNull($posted);
         $this->assertSame(1, Notification::query()->where('type', 'qotdAsked')->count());
 
-        $this->assertSame(200, $this->api('POST', '/questions/3/ask', 5)[0]);
+        $this->assertSame(200, $this->res('POST', '/3/ask', 5)[0]);
 
         $this->assertNotNull(Discussion::query()->find($posted)->hidden_at, 'the old daily discussion is hidden');
         $about = fn (int $id) => Notification::query()->whereIn('type', ['qotdNew', 'qotdAsked'])->get()
@@ -429,7 +450,7 @@ class QuestionOfTheDayTest extends TestCase
         $this->assertSame([2, 2], [Streak::query()->find(2)->current, Streak::query()->find(2)->total]);
 
         // A moderator deletes the day's question: its answers' credit goes, and its replacement counts.
-        $this->assertSame(204, $this->api('DELETE', "/questions/$id", 5)[0]);
+        $this->assertSame(204, $this->res('DELETE', "/$id", 5)[0]);
         $this->assertSame(1, Streak::query()->find(2)->current);
         $replacement = $this->api('GET', '', 2)[1]['question']['id'];
         $this->assertNotSame($id, $replacement);
@@ -440,13 +461,118 @@ class QuestionOfTheDayTest extends TestCase
     #[Test]
     public function a_suggestions_words_cant_change_under_its_votes(): void
     {
-        $this->api('POST', '/questions/4/vote', 2, ['vote' => true]);
-        $this->assertSame(409, $this->api('PATCH', '/questions/4', 3, ['body' => 'Which snack would you take to the moon instead?'])[0]);
+        $this->res('POST', '/4/vote', 2, ['vote' => true]);
+        $this->assertSame(409, $this->res('PATCH', '/4', 3, $this->doc(['body' => 'Which snack would you take to the moon instead?'], 4))[0]);
         $this->assertSame('Which snack would you take to a desert island?', Question::query()->find(4)->body);
 
         // A moderator may reword it; the count starts again.
-        $this->assertSame(200, $this->api('PATCH', '/questions/4', 5, ['body' => 'Which snack would you take on a desert island?'])[0]);
+        $this->assertSame(200, $this->res('PATCH', '/4', 5, $this->doc(['body' => 'Which snack would you take on a desert island?'], 4))[0]);
         $this->assertSame(0, Question::query()->find(4)->votes_count);
         $this->assertSame(0, $this->database()->table('qotd_votes')->where('question_id', 4)->count());
+    }
+
+    #[Test]
+    public function the_resources_serve_the_archive_the_queue_and_the_streak_boards(): void
+    {
+        $this->api('GET', '', 2);
+        $this->api('POST', '/questions/2/answers', 2, ['body' => 'The coast road at sunrise']);
+        $this->api('POST', '/questions/2/answers', 3, ['body' => 'Route 66, both ways']);
+        $theirs = Answer::query()->where('user_id', 3)->first();
+        $this->api('POST', "/answers/{$theirs->id}/react", 2, ['type' => 'fire']);
+        $this->moveTo('2026-11-11 07:00:00');
+        $this->api('GET', '', 2);
+
+        [$status, $archive] = $this->res('GET', '', null, [], ['filter' => ['list' => 'archive'], 'include' => 'topAnswer,topAnswer.user,user']);
+        $this->assertSame(200, $status);
+        $this->assertSame([2], $this->ids($archive));
+        $row = $archive['data'][0];
+        $this->assertSame([2, '2026-11-10', false], [$row['attributes']['answersCount'], $row['attributes']['askedOn'], $row['attributes']['open']]);
+        $this->assertSame((string) $theirs->id, $row['relationships']['topAnswer']['data']['id']);
+        $included = collect($archive['included'] ?? [])->keyBy(fn ($i) => $i['type'].':'.$i['id']);
+        $this->assertSame('Route 66, both ways', $included['qotd-answers:'.$theirs->id]['attributes']['body']);
+        $this->assertTrue($included->has('users:3') && $included->has('users:4'), 'the winner, and Sam who suggested it');
+
+        // Today's question is not in the archive, and by id it carries no answers.
+        [, $today] = $this->res('GET', '/1', null, [], ['include' => 'topAnswer']);
+        $this->assertTrue($today['data']['attributes']['open']);
+        $this->assertArrayNotHasKey('topAnswer', $today['data']['relationships'] ?? []);
+
+        // The queue shows whether the viewer voted, per question, in one query.
+        $this->res('POST', '/4/vote', 2, ['vote' => true]);
+        [, $queue] = $this->res('GET', '', 2, [], ['filter' => ['list' => 'queue']]);
+        $this->assertSame([[4, true, 1]], array_map(fn ($r) => [(int) $r['id'], $r['attributes']['voted'], $r['attributes']['votesCount']], $queue['data']));
+
+        // Streak boards: who is on a roll (Lee answered the question before this one) and the best ever.
+        [$status, $going] = $this->api('GET', '/api/qotd-streaks', null, [], ['filter' => ['board' => 'going'], 'include' => 'user']);
+        $this->assertSame(200, $status);
+        $this->assertEqualsCanonicalizing(['2', '3'], array_column($going['data'], 'id'));
+        $this->assertSame(1, $going['data'][0]['attributes']['current']);
+        [, $mine] = $this->api('GET', '/api/qotd-streaks/2', 2);
+        $this->assertSame([1, 1, 1], [$mine['data']['attributes']['current'], $mine['data']['attributes']['best'], $mine['data']['attributes']['total']]);
+
+        // A board is ten long however many streaks there are, and the archive pages by twenty.
+        for ($id = 30; $id < 45; $id++) {
+            $this->database()->table('users')->insert(['id' => $id, 'username' => "streak$id", 'email' => "streak$id@machine.local", 'is_email_confirmed' => 1, 'password' => 'x', 'joined_at' => Carbon::now()]);
+            $this->database()->table('qotd_streaks')->insert(['user_id' => $id, 'current' => 0, 'best' => $id, 'total' => $id, 'last_day' => '2026-01-01']);
+        }
+        [, $best] = $this->api('GET', '/api/qotd-streaks', null, [], ['filter' => ['board' => 'best']]);
+        $this->assertCount(10, $best['data']);
+        $this->assertSame('44', $best['data'][0]['id']);
+        for ($i = 0; $i < 22; $i++) {
+            Question::query()->forceCreate(['body' => "Old question number $i?", 'status' => 'approved', 'asked_on' => Carbon::parse('2026-01-01')->addDays($i)->toDateString(), 'closed_at' => Carbon::now()]);
+        }
+        [, $page] = $this->res('GET', '', null, [], ['filter' => ['list' => 'archive']]);
+        $this->assertCount(20, $page['data']);
+        $this->assertNotEmpty($page['links']['next'] ?? null);
+    }
+
+    #[Test]
+    public function no_resource_or_include_ever_reaches_an_answer_to_the_question_thats_up(): void
+    {
+        // Yesterday: question 2, answered and closed (the public archive).
+        $this->api('GET', '', 2);
+        $this->api('POST', '/questions/2/answers', 3, ['body' => 'PUBLIC-ARCHIVE answer']);
+        $this->moveTo('2026-11-11 07:00:00');
+        $open = $this->api('GET', '', 2)[1]['question']['id'];
+        // Today: Lee answers; nobody else has.
+        $this->assertSame(201, $this->api('POST', "/questions/$open/answers", 3, ['body' => 'TODAYS-SECRET answer'])[0]);
+        $secret = Answer::query()->where('question_id', $open)->first();
+
+        // A bad row must not open the gate either: point the closed question's winner at today's answer.
+        Question::query()->whereKey(2)->update(['top_answer_id' => $secret->id]);
+
+        $urls = [
+            ['/api/qotd-questions', ['filter' => ['list' => 'archive'], 'include' => 'topAnswer,topAnswer.user,user']],
+            ['/api/qotd-questions', ['filter' => ['list' => 'queue'], 'include' => 'topAnswer,user']],
+            ['/api/qotd-questions', ['filter' => ['list' => 'pool'], 'include' => 'topAnswer,user']],
+            ['/api/qotd-questions/2', ['include' => 'topAnswer,topAnswer.user,user']],
+            ["/api/qotd-questions/$open", ['include' => 'topAnswer,topAnswer.user,user']],
+            ["/api/qotd-answers/{$secret->id}", []],
+            ['/api/qotd-answers', []],
+            ['/api/qotd-streaks', ['include' => 'user']],
+            ['/api/qotd-streaks', ['filter' => ['board' => 'best'], 'include' => 'user']],
+            ['/api/qotd-streaks/3', ['include' => 'user']],
+            ['/api/users/3', []],
+            ['/api/discussions', []],
+            ['/api', []],
+            ['', []],
+            ["/questions/$open", []],
+            ["/questions/$open/answers", []],
+            ['/questions/2', []],
+        ];
+
+        foreach ([null => 'guest', 2 => 'a member who hasn\'t answered', 5 => 'a moderator who hasn\'t answered'] as $viewer => $who) {
+            foreach ($urls as [$url, $query]) {
+                [, , $raw] = $this->api('GET', $url, $viewer ?: null, [], $query);
+                $this->assertStringNotContainsString('TODAYS-SECRET', $raw, "$url ".json_encode($query)." as $who");
+            }
+            // The archive still works: yesterday's question with its answers, for everyone who may view it.
+            $this->assertStringContainsString('PUBLIC-ARCHIVE', $this->api('GET', '/questions/2', $viewer ?: null)[2], $who);
+        }
+
+        // Once you've answered, the plain endpoint shows today's answers (and still no resource does).
+        $this->api('POST', "/questions/$open/answers", 2, ['body' => 'Mine']);
+        $this->assertStringContainsString('TODAYS-SECRET', $this->api('GET', '', 2)[2]);
+        $this->assertStringNotContainsString('TODAYS-SECRET', $this->res('GET', '/2', 2, [], ['include' => 'topAnswer'])[2]);
     }
 }

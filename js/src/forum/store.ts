@@ -82,7 +82,7 @@ class TodayStore {
   }
 
   subscribe(on: boolean): Promise<void> {
-    return call<{ subscribed: boolean }>('POST', '/subscription', { on }).then((r) => {
+    return call<{ subscribed: boolean }>('POST', '/qotd-questions/reminder', { on }).then((r) => {
       if (this.data) this.data.subscribed = r.subscribed;
       m.redraw();
     });

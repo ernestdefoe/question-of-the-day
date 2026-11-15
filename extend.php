@@ -7,10 +7,12 @@
  * scheduler every minute, page requests too for forums without one); the
  * unique day index means a day only ever gets one. Answers to the question
  * that's up are hidden from anyone who hasn't posted their own: Access is
- * the one gate, Present the one place answers are written out, and only
- * these plain endpoints serve them (no API resource, so no include can pull
- * one in). When the next question goes up, yesterday's closes with its top
- * answer, which tomorrow's card features.
+ * the one gate, Present the one place they are written out, and only the
+ * plain /api/qotd endpoints serve them. Everything else (the pool, the
+ * queue, the archive, streaks) is JSON:API resources; the only answers those
+ * can reach are closed questions' (the public archive), because the
+ * qotd-answers scope admits nothing else. When the next question goes up,
+ * yesterday's closes with its top answer, which tomorrow's card features.
  *
  * forum.js wires routes, the front-page card and notifications; the pages
  * are a lazy chunk.
@@ -50,24 +52,26 @@ return [
     (new Extend\View())
         ->namespace('ernestdefoe-question-of-the-day', __DIR__.'/views'),
 
+    // The pool, the queue, the archive and the streak boards are JSON:API resources. A question
+    // resource leads to an answer only as a CLOSED question's topAnswer, through qotd-answers, whose
+    // scope admits nothing else.
+    new Extend\ApiResource(Api\Resource\QuestionResource::class),
+    new Extend\ApiResource(Api\Resource\AnswerResource::class),
+    new Extend\ApiResource(Api\Resource\StreakResource::class),
+
+    // Today's question and its answers stay plain endpoints on purpose: they return answers only
+    // after Access::canSeeAnswers() (you posted yours), a gate a JSON:API include could walk around.
     (new Extend\Routes('api'))
         ->get('/qotd', 'qotd.today', Api\TodayController::class)
-        ->get('/qotd/archive', 'qotd.archive', Api\ListController::class)
-        ->get('/qotd/queue', 'qotd.queue', Api\ListController::class)
-        ->get('/qotd/streaks', 'qotd.streaks', Api\ListController::class)
-        ->post('/qotd/subscription', 'qotd.subscription', Api\SubscriptionController::class)
-        ->post('/qotd/starter', 'qotd.starter', Api\QuestionController::class)
-        ->post('/qotd/questions', 'qotd.questions.create', Api\QuestionController::class)
         ->get('/qotd/questions/{id:\d+}', 'qotd.questions.show', Api\QuestionShowController::class)
-        ->patch('/qotd/questions/{id:\d+}', 'qotd.questions.update', Api\QuestionController::class)
-        ->delete('/qotd/questions/{id:\d+}', 'qotd.questions.delete', Api\QuestionController::class)
-        ->post('/qotd/questions/{id:\d+}/vote', 'qotd.questions.vote', Api\VoteController::class)
-        ->post('/qotd/questions/{id:\d+}/ask', 'qotd.questions.ask', Api\AskController::class)
         ->get('/qotd/questions/{id:\d+}/answers', 'qotd.answers.index', Api\QuestionShowController::class)
         ->post('/qotd/questions/{id:\d+}/answers', 'qotd.answers.create', Api\AnswerController::class)
         ->patch('/qotd/answers/{id:\d+}', 'qotd.answers.update', Api\AnswerController::class)
         ->delete('/qotd/answers/{id:\d+}', 'qotd.answers.delete', Api\AnswerController::class)
         ->post('/qotd/answers/{id:\d+}/react', 'qotd.answers.react', Api\ReactController::class),
+
+    (new Extend\ErrorHandling())
+        ->handler(\ErnestDefoe\QuestionOfTheDay\Refusal::class, Api\RefusalHandler::class),
 
     (new Extend\Console())
         ->command(RotateCommand::class)

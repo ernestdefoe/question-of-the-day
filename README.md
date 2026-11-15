@@ -51,6 +51,10 @@ php flarum migrate
 php flarum cache:clear
 ```
 
+## How it's built
+
+The question pool, the suggestion queue, the archive and the streak boards are Flarum 2 JSON:API resources (`qotd-questions`, `qotd-streaks`). Today's question and its answers are served by a few plain endpoints under `/api/qotd` on purpose: they return answers only to a member who has posted their own, and a JSON:API include could otherwise walk around that check. The only answers the resources can reach are those of questions that have already closed (the public archive), through a `qotd-answers` type whose scope admits nothing else.
+
 ## Privacy
 
 Answers are only ever sent to members who answered the same question (or to moderators who open it to moderate) until the next question replaces it; then they become part of the public archive for anyone who can view questions. With [flarum/gdpr](https://github.com/flarum/gdpr) enabled, a member's answers, suggestions and streak are in their data export, and erasing an account removes their answers, reactions and votes.

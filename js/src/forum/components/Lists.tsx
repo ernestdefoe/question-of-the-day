@@ -7,7 +7,21 @@ import LoadingIndicator from 'flarum/common/components/LoadingIndicator';
 import humanTime from 'flarum/common/helpers/humanTime';
 import extractText from 'flarum/common/utils/extractText';
 import type Mithril from 'mithril';
-import { call, errorText, shortDay, t, type AnswerRow, type Person, type QueueRow, type QuestionRow } from '../api';
+import {
+  call,
+  doc,
+  errorText,
+  personOf,
+  rel,
+  rows,
+  shortDay,
+  t,
+  type AnswerRow,
+  type Doc,
+  type Person,
+  type QueueRow,
+  type QuestionRow,
+} from '../api';
 import { today } from '../store';
 import { face, who, logIn } from './parts';
 
@@ -29,10 +43,23 @@ export class Archive extends Component {
 
   load(offset: number) {
     this.loading = true;
-    call<{ questions: ArchiveRow[]; hasMore: boolean }>('GET', `/archive?offset=${offset}`, undefined, true)
-      .then((r) => {
-        this.rows = this.rows.concat(r.questions);
-        this.more = r.hasMore;
+    const query = new URLSearchParams({ 'filter[list]': 'archive', include: 'topAnswer,topAnswer.user,user', 'page[offset]': String(offset) });
+    call<Doc>('GET', `/qotd-questions?${query}`, undefined, true)
+      .then((d) => {
+        this.rows = this.rows.concat(
+          rows(d).map((row) => {
+            const top = rel(d, row, 'topAnswer');
+            const author = top ? personOf(rel(d, { _r: top }, 'user')) : null;
+            return {
+              ...(row as any),
+              suggestedBy: personOf(rel(d, row, 'user')),
+              top: top
+                ? ({ id: Number(top.id), body: top.attributes.body, author, reactionsCount: top.attributes.reactionsCount } as AnswerRow)
+                : null,
+            } as ArchiveRow;
+          })
+        );
+        this.more = !!d.links?.next;
       })
       .catch(() => {
         this.failed = true;
@@ -107,13 +134,46 @@ export class Queue extends Component {
 
   oninit(vnode: Mithril.Vnode<any, this>) {
     super.oninit(vnode);
-    this.load();
+    // Who may see the pool comes with today's data: wait for it.
+    today.load().then(() => this.load());
   }
 
+  /** The queue for everyone who suggests; the pool too for moderators (a surprise for everyone else). */
   load() {
-    return call<QueueData>('GET', '/queue', undefined, true)
-      .then((r) => {
-        this.data = r;
+    const list = (name: string, limit: number) =>
+      call<Doc>(
+        'GET',
+        `/qotd-questions?${new URLSearchParams({ 'filter[list]': name, include: 'user', 'page[limit]': String(limit) })}`,
+        undefined,
+        true
+      ).then((d) =>
+        rows(d).map(
+          (row) =>
+            ({
+              id: row.id,
+              body: row.body,
+              votes: row.votesCount,
+              voted: !!row.voted,
+              author: personOf(rel(d, row, 'user')),
+              createdAt: row.createdAt,
+              mine: !!row.mine,
+              scheduledFor: row.scheduledFor ?? null,
+            }) as QueueRow
+        )
+      );
+    const moderator = !!today.data?.can.moderate;
+
+    return Promise.all([list('queue', 100), moderator ? list('pool', 200) : Promise.resolve(null)])
+      .then(([pending, pool]) => {
+        const question = today.data?.question;
+        this.data = {
+          pending,
+          mine: 0,
+          pool,
+          poolCount: pool ? pool.length : null,
+          // "Ask this now" only replaces today's question while nobody has answered it.
+          answeredToday: !!(question?.open && (question.answersCount || 0) > 0),
+        };
       })
       .catch(() => {})
       .finally(() => m.redraw());
@@ -194,7 +254,7 @@ export class Queue extends Component {
 
   suggest() {
     this.sending = true;
-    call('POST', '/questions', { body: this.draft })
+    call('POST', '/qotd-questions', doc({ body: this.draft }))
       .then(() => {
         this.draft = '';
         app.alerts.show({ type: 'success' }, t('queue.suggested'));
@@ -273,10 +333,11 @@ export class Queue extends Component {
     const want = !row.voted;
     row.voted = want;
     row.votes += want ? 1 : -1;
-    call<{ votes: number; voted: boolean }>('POST', `/questions/${row.id}/vote`, { vote: want })
-      .then((r) => {
-        row.votes = r.votes;
-        row.voted = r.voted;
+    call<Doc>('POST', `/qotd-questions/${row.id}/vote`, { vote: want })
+      .then((d) => {
+        const [fresh] = rows(d);
+        row.votes = fresh.votesCount;
+        row.voted = !!fresh.voted;
       })
       .catch(() => {
         row.voted = !want;
@@ -290,7 +351,7 @@ export class Queue extends Component {
 
   update(row: QueueRow, body: Record<string, any>) {
     this.busy[row.id] = true;
-    call('PATCH', `/questions/${row.id}`, body)
+    call('PATCH', `/qotd-questions/${row.id}`, doc(body, row.id))
       .then(() => this.load())
       .then(() => today.load(true))
       .catch(() => {})
@@ -302,7 +363,7 @@ export class Queue extends Component {
 
   remove(row: QueueRow) {
     if (!confirm(extractText(t('queue.delete_confirm')))) return;
-    call('DELETE', `/questions/${row.id}`)
+    call('DELETE', `/qotd-questions/${row.id}`)
       .then(() => this.load())
       .catch(() => {});
   }
@@ -313,7 +374,7 @@ export class Queue extends Component {
         className="QotdSuggest"
         onsubmit={(e: SubmitEvent) => {
           e.preventDefault();
-          this.add('/questions', { body: this.bulk });
+          this.add('/qotd-questions/add', { bodies: this.bulk.split(/\r?\n/) });
         }}
       >
         <label className="QotdSuggest-label" for="qotd-add">
@@ -330,7 +391,7 @@ export class Queue extends Component {
           }}
         />
         <div className="QotdSuggest-row QotdSuggest-row--end">
-          <Button className="Button" icon="fas fa-box-open" loading={this.adding} onclick={() => this.add('/starter', {})}>
+          <Button className="Button" icon="fas fa-box-open" loading={this.adding} onclick={() => this.add('/qotd-questions/starter', {})}>
             {t('pool.starter')}
           </Button>
           <Button type="submit" className="Button Button--primary" loading={this.adding} disabled={!this.bulk.trim()}>
@@ -345,7 +406,7 @@ export class Queue extends Component {
     this.adding = true;
     call<{ added: number; skipped: number }>('POST', path, body)
       .then((r) => {
-        if (path !== '/starter') this.bulk = '';
+        if (!path.endsWith('/starter')) this.bulk = '';
         app.alerts.show({ type: 'success' }, t('pool.added', { added: r.added, skipped: r.skipped }));
         return this.load().then(() => today.load(true));
       })
@@ -421,7 +482,7 @@ export class Queue extends Component {
 
   askNow(row: QueueRow) {
     if (!confirm(extractText(t('pool.ask_now_confirm')))) return;
-    call('POST', `/questions/${row.id}/ask`)
+    call('POST', `/qotd-questions/${row.id}/ask`)
       .then(() => today.load(true))
       .then(() => m.route.set(app.route('question-of-the-day')))
       .catch((error) => app.alerts.show({ type: 'error' }, errorText(error)));
@@ -440,9 +501,16 @@ export class Streaks extends Component {
 
   oninit(vnode: Mithril.Vnode<any, this>) {
     super.oninit(vnode);
-    call<any>('GET', '/streaks', undefined, true)
-      .then((r) => {
-        this.data = r;
+    const board = (name: string) =>
+      call<Doc>('GET', `/qotd-streaks?filter[board]=${name}&include=user`, undefined, true).then((d) =>
+        rows(d)
+          .map((row) => ({ user: personOf(rel(d, row, 'user')) as Person, days: name === 'best' ? row.best : row.current, total: row.total }))
+          .filter((row) => row.user)
+      );
+    // Your own streak comes with today's data (no request of its own, and no 404 before your first answer).
+    Promise.all([board('going'), board('best'), today.load()])
+      .then(([going, best]) => {
+        this.data = { going, best, me: app.session.user && today.data ? today.data.streak : null };
       })
       .catch(() => {})
       .finally(() => m.redraw());
