@@ -5,10 +5,10 @@ namespace ErnestDefoe\QuestionOfTheDay;
 use Carbon\Carbon;
 use ErnestDefoe\QuestionOfTheDay\Notification\AskedBlueprint;
 use ErnestDefoe\QuestionOfTheDay\Notification\NewQuestionBlueprint;
+use ErnestDefoe\QuestionOfTheDay\Tags\DiscussionTags;
 use Flarum\Api\JsonApi;
 use Flarum\Api\Resource\DiscussionResource;
 use Flarum\Discussion\Discussion;
-use Flarum\Extension\ExtensionManager;
 use Flarum\Group\Group;
 use Flarum\Group\Permission;
 use Flarum\Http\UrlGenerator;
@@ -46,7 +46,7 @@ class Delivery
         private readonly NotificationSyncer $notifications,
         private readonly JsonApi $api,
         private readonly SettingsRepositoryInterface $settings,
-        private readonly ExtensionManager $extensions,
+        private readonly DiscussionTags $tags,
         private readonly TranslatorInterface $translator,
         private readonly UrlGenerator $url,
         private readonly LoggerInterface $log,
@@ -121,7 +121,6 @@ class Delivery
         $groups[] = Group::ADMINISTRATOR_ID;
         // Never the member who suggested it: they got their own alert.
         $skip = $question->suggested ? (int) $question->user_id : 0;
-        $drivers = NotificationSyncer::getNotificationDrivers();
 
         for ($i = 0; $i < $chunks; $i++) {
             $chunk = User::query()
@@ -137,28 +136,7 @@ class Delivery
                 return;
             }
 
-            $users = $chunk->filter(fn (User $user) => $user->id !== $skip);
-
-            // Alerts in one batch, to whoever doesn't have it yet (a rerun of this chunk sends none twice).
-            $have = Notification::query()->matchingBlueprint($blueprint)->whereIn('user_id', $users->modelKeys())->pluck('user_id')->all();
-            $new = $users->reject(fn (User $user) => in_array($user->id, $have))->values()->all();
-            foreach ($drivers as $name => $driver) {
-                if ($name !== 'email' && $new) {
-                    $driver->send($blueprint, $new);
-                }
-            }
-
-            // Emails one by one behind their own cursor: a timeout halfway resumes at the next member, never skips the rest.
-            if (isset($drivers['email'])) {
-                foreach ($users as $user) {
-                    if ($user->id <= $question->email_cursor || ! $user->shouldEmail(NewQuestionBlueprint::getType())) {
-                        continue;
-                    }
-                    $drivers['email']->send($blueprint, [$user]);
-                    $question->email_cursor = $user->id;
-                    Question::query()->whereKey($question->id)->update(['email_cursor' => $user->id]);
-                }
-            }
+            $this->send($question, $blueprint, $chunk->filter(fn (User $user) => $user->id !== $skip));
 
             $question->notify_cursor = (int) $chunk->last()->id;
             $question->email_cursor = max($question->email_cursor, $question->notify_cursor);
@@ -166,10 +144,41 @@ class Delivery
         }
     }
 
+    /**
+     * One chunk of subscribers: alerts in one batch to whoever doesn't have it yet (a rerun of
+     * the chunk sends none twice), then emails one by one behind their own cursor, so a timeout
+     * halfway resumes at the next member instead of skipping the rest.
+     *
+     * @param \Illuminate\Database\Eloquent\Collection<int, User> $users
+     */
+    private function send(Question $question, NewQuestionBlueprint $blueprint, \Illuminate\Database\Eloquent\Collection $users): void
+    {
+        $drivers = NotificationSyncer::getNotificationDrivers();
+        $have = Notification::query()->matchingBlueprint($blueprint)->whereIn('user_id', $users->modelKeys())->pluck('user_id')->all();
+        $new = $users->reject(fn (User $user) => in_array($user->id, $have))->values()->all();
+        foreach ($drivers as $name => $driver) {
+            if ($name !== 'email' && $new) {
+                $driver->send($blueprint, $new);
+            }
+        }
+
+        if (! isset($drivers['email'])) {
+            return;
+        }
+        foreach ($users as $user) {
+            if ($user->id <= $question->email_cursor || ! $user->shouldEmail(NewQuestionBlueprint::getType())) {
+                continue;
+            }
+            $drivers['email']->send($blueprint, [$user]);
+            $question->email_cursor = $user->id;
+            Question::query()->whereKey($question->id)->update(['email_cursor' => $user->id]);
+        }
+    }
+
     private function post(Question $question): void
     {
         $poster = $this->poster();
-        $tags = $poster ? $this->tagsFor($poster) : false;
+        $tags = $poster ? $this->tags->forPoster($poster) : false;
         if (! $poster || $tags === false || ! $poster->can('startDiscussion')) {
             // Nobody can post it: no discussion today, and nobody tries again.
             Question::query()->whereKey($question->id)->whereNull('posted_at')->update(['posted_at' => Carbon::now()]);
@@ -216,27 +225,6 @@ class Delivery
         $user = $name !== '' ? User::query()->where('username', $name)->first() : null;
 
         return $user ?? User::query()->whereHas('groups', fn ($q) => $q->whereKey(Group::ADMINISTRATOR_ID))->orderBy('id')->first();
-    }
-
-    /**
-     * The admin's tag for the daily discussion, if the poster may start one there.
-     *
-     * @return list<int>|null|false null: no tags needed; false: can't post.
-     */
-    private function tagsFor(User $poster): array|null|false
-    {
-        if (! $this->extensions->isEnabled('flarum-tags') || ! class_exists(\Flarum\Tags\Tag::class)) {
-            return null;
-        }
-
-        $id = (int) $this->settings->get(Settings::TAG);
-        $tag = $id ? \Flarum\Tags\Tag::whereVisibleTo($poster)->find($id) : null;
-        if ($tag) {
-            // The API's process() skips the tag's own permission check: ask it here.
-            return $poster->can('startDiscussion', $tag) ? [$id] : false;
-        }
-
-        return $poster->hasPermission('bypassTagCounts') ? null : false;
     }
 
     private function guard(Question $question, callable $step): void

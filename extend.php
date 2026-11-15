@@ -23,6 +23,7 @@ use ErnestDefoe\QuestionOfTheDay\Console\RotateCommand;
 use ErnestDefoe\QuestionOfTheDay\Gdpr\Forget;
 use ErnestDefoe\QuestionOfTheDay\Gdpr\QotdData;
 use ErnestDefoe\QuestionOfTheDay\Http\PageContent;
+use ErnestDefoe\QuestionOfTheDay\Tags;
 use ErnestDefoe\QuestionOfTheDay\Notification\AskedBlueprint;
 use ErnestDefoe\QuestionOfTheDay\Notification\NewQuestionBlueprint;
 use ErnestDefoe\QuestionOfTheDay\Settings;
@@ -98,7 +99,14 @@ return [
     (new Extend\Event())
         ->listen(Deleting::class, fn (Deleting $event) => Forget::user($event->user->id)),
 
+    // The daily discussion's tag: none without flarum/tags; the admin's tag with it.
+    (new Extend\ServiceProvider())
+        ->register(Tags\DefaultTagsServiceProvider::class),
+
     (new Extend\Conditional())
+        ->whenExtensionEnabled('flarum-tags', fn () => [
+            (new Extend\ServiceProvider())->register(Tags\TagsServiceProvider::class),
+        ])
         ->whenExtensionEnabled('flarum-gdpr', fn () => [
             (new UserData())->addType(QotdData::class),
         ]),
